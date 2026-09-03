@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { Activity, Footprints, Plus, AlertCircle, TrendingUp, Watch } from 'lucide-react';
 import { useAuth } from '@/context/AuthContext';
 
@@ -16,8 +16,7 @@ export interface VitalsRecord {
 
 export function HealthVitalsManager() {
   const { user } = useAuth();
-  const userId = user?.id || 'guest';
-  const vitalsStorageKey = `carebridge_user_${userId}_vitals`;
+  const userId = user?.id || 'usr_demo_1';
   const stepsStorageKey = `carebridge_user_${userId}_steps`;
 
   const [vitals, setVitals] = useState<VitalsRecord[]>([]);
@@ -30,59 +29,73 @@ export function HealthVitalsManager() {
   const [value, setValue] = useState('');
   const [notes, setNotes] = useState('');
 
-  useEffect(() => {
-    const timer = setTimeout(() => {
-      try {
-        const storedVitals = localStorage.getItem(vitalsStorageKey);
-        if (storedVitals) {
-          setVitals(JSON.parse(storedVitals));
-        } else {
-          setVitals([]);
-        }
-        const storedSteps = localStorage.getItem(stepsStorageKey);
-        if (storedSteps) {
-          setSteps(Number(storedSteps));
-        } else {
-          setSteps(0);
-        }
-      } catch (e) {
-        console.error('Error loading vitals storage:', e);
-      }
-    }, 0);
-    return () => clearTimeout(timer);
-  }, [vitalsStorageKey, stepsStorageKey]);
-
-  const saveVitals = (updated: VitalsRecord[]) => {
-    setVitals(updated);
+  const fetchVitals = useCallback(async () => {
     try {
-      localStorage.setItem(vitalsStorageKey, JSON.stringify(updated));
-    } catch (e) {
-      console.error('Error saving vitals:', e);
+      const res = await fetch(`/api/vitals?userId=${userId}`);
+      const data = await res.json();
+      if (data.success && data.vitals) {
+        const mapped: VitalsRecord[] = data.vitals.map((v: { id: string; sysBP: number; diaBP: number; heartRate: number; bloodSugar?: number; recordedAt: string; notes?: string }) => ({
+          id: v.id,
+          type: 'Blood Pressure',
+          value: `${v.sysBP}/${v.diaBP}`,
+          unit: 'mmHg',
+          status: 'Normal',
+          recordedAt: new Date(v.recordedAt).toLocaleString([], { dateStyle: 'short', timeStyle: 'short' }),
+          notes: v.notes,
+        }));
+        setVitals(mapped);
+      }
+    } catch (err) {
+      console.error('Error fetching vitals:', err);
     }
-  };
+  }, [userId]);
 
-  const handleAddVitals = (e: React.FormEvent) => {
+  useEffect(() => {
+    fetchVitals();
+    try {
+      const storedSteps = localStorage.getItem(stepsStorageKey);
+      if (storedSteps) setSteps(Number(storedSteps));
+    } catch (e) {
+      console.error('Error loading steps:', e);
+    }
+  }, [fetchVitals, stepsStorageKey]);
+
+  const handleAddVitals = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!value) return;
 
-    let unit = 'mmHg';
-    if (metricType === 'Heart Rate') unit = 'bpm';
-    if (metricType === 'Blood Glucose') unit = 'mg/dL';
-    if (metricType === 'Weight') unit = 'kg';
-    if (metricType === 'SpO2') unit = '%';
-    if (metricType === 'Temperature') unit = '°F';
+    let sys = 120;
+    let dia = 80;
+    let hr = 72;
 
-    const newRecord: VitalsRecord = {
-      id: 'vit_' + Date.now(),
-      type: metricType,
-      value,
-      unit,
-      status: 'Normal',
-      recordedAt: `Today, ${new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`,
-      notes,
-    };
+    if (value.includes('/')) {
+      const parts = value.split('/');
+      sys = parseInt(parts[0], 10) || 120;
+      dia = parseInt(parts[1], 10) || 80;
+    } else {
+      sys = parseInt(value, 10) || 120;
+    }
 
-    saveVitals([newRecord, ...vitals]);
+    try {
+      const res = await fetch('/api/vitals', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          userId,
+          sysBP: sys,
+          diaBP: dia,
+          heartRate: hr,
+          notes,
+        }),
+      });
+      const data = await res.json();
+      if (data.success) {
+        fetchVitals();
+      }
+    } catch (err) {
+      console.error('Error recording vitals to API:', err);
+    }
+
     setIsAddModalOpen(false);
     setValue('');
     setNotes('');

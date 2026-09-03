@@ -1,7 +1,8 @@
 'use client';
 
 import React, { useState } from 'react';
-import { Mail, Phone, Send, CheckCircle2 } from 'lucide-react';
+import Link from 'next/link';
+import { Mail, Phone, Send, CheckCircle2, MessageSquare, ArrowRight } from 'lucide-react';
 import { SectionHeader } from '@/components/ui/SectionHeader';
 import { Breadcrumbs } from '@/components/ui/Breadcrumbs';
 import { MedicalDisclaimerBanner } from '@/components/ui/MedicalDisclaimerBanner';
@@ -30,8 +31,30 @@ export default function ContactPage() {
         <SectionHeader
           badge="Get in Touch"
           title="We’re Here to Support Your Caregiving Journey"
-          subtitle="Have questions about CareBridge or want to discuss partnership opportunities? Send us a message."
+          subtitle="Have questions about CareBridge or want to submit product feedback? Send us a message below or use our Feedback Portal."
         />
+
+        {/* Dedicated Feedback Portal Banner */}
+        <div className="max-w-5xl mx-auto bg-gradient-to-r from-teal-900 via-slate-900 to-teal-950 rounded-3xl p-6 sm:p-8 text-white flex flex-col sm:flex-row items-start sm:items-center justify-between gap-6 shadow-xl border border-teal-500/30">
+          <div className="flex items-center gap-4">
+            <div className="p-3 rounded-2xl bg-teal-500/20 text-teal-300 border border-teal-500/30">
+              <MessageSquare className="w-7 h-7" />
+            </div>
+            <div>
+              <h3 className="text-xl font-extrabold text-white">Have App Feedback or Feature Requests?</h3>
+              <p className="text-xs text-slate-300 mt-1 max-w-xl">
+                Submit platform feedback, star ratings, or medicine reminder feature suggestions directly to our product engineering team.
+              </p>
+            </div>
+          </div>
+          <Link
+            href="/feedback"
+            className="px-6 py-3.5 rounded-xl bg-teal-600 hover:bg-teal-500 text-white font-extrabold text-sm flex items-center gap-2 shadow-lg shrink-0"
+          >
+            <span>Open Feedback Portal</span>
+            <ArrowRight className="w-4 h-4" />
+          </Link>
+        </div>
 
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-10 max-w-5xl mx-auto">
           {/* Contact Details */}

@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { Pill, Plus, CheckCircle2, XCircle, Clock, Trash2, Check } from 'lucide-react';
 import { useAuth } from '@/context/AuthContext';
 
@@ -21,8 +21,7 @@ export interface MedicineItem {
 
 export function MedicineManager() {
   const { user } = useAuth();
-  const userId = user?.id || 'guest';
-  const storageKey = `carebridge_user_${userId}_medicines`;
+  const userId = user?.id || 'usr_demo_1';
 
   const [medicines, setMedicines] = useState<MedicineItem[]>([]);
   const [activeTab, setActiveTab] = useState<'today' | 'all' | 'history'>('today');
@@ -36,52 +35,61 @@ export function MedicineManager() {
   const [instruction, setInstruction] = useState<'Before Food' | 'After Food' | 'With Water' | 'Anytime'>('After Food');
   const [notes, setNotes] = useState('');
 
-  useEffect(() => {
-    const timer = setTimeout(() => {
-      try {
-        const stored = localStorage.getItem(storageKey);
-        if (stored) {
-          setMedicines(JSON.parse(stored));
-        } else {
-          setMedicines([]);
-        }
-      } catch (e) {
-        console.error('Error loading medicines from storage:', e);
-      }
-    }, 0);
-    return () => clearTimeout(timer);
-  }, [storageKey]);
-
-  const saveToStorage = (updated: MedicineItem[]) => {
-    setMedicines(updated);
+  const fetchMedicines = useCallback(async () => {
     try {
-      localStorage.setItem(storageKey, JSON.stringify(updated));
-    } catch (e) {
-      console.error('Error saving medicines:', e);
+      const res = await fetch(`/api/medicines?userId=${userId}`);
+      const data = await res.json();
+      if (data.success && data.medicines) {
+        // Map backend record to component model
+        const mapped: MedicineItem[] = data.medicines.map((m: { id: string; name: string; dosage: string; frequency: string; times: string[]; startDate: string; notes?: string }) => ({
+          id: m.id,
+          name: m.name,
+          dose: m.dosage,
+          condition: 'General Health',
+          time: m.times && m.times.length > 0 ? m.times[0] : '09:00 AM',
+          frequency: m.frequency || 'Daily',
+          instruction: 'After Food',
+          startDate: m.startDate,
+          notes: m.notes,
+          status: 'Pending',
+        }));
+        setMedicines(mapped);
+      }
+    } catch (err) {
+      console.error('Error fetching medicines:', err);
     }
-  };
+  }, [userId]);
 
-  const handleAddMedicine = (e: React.FormEvent) => {
+  useEffect(() => {
+    fetchMedicines();
+  }, [fetchMedicines]);
+
+  const handleAddMedicine = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!name || !dose) return;
 
-    const newMed: MedicineItem = {
-      id: 'med_' + Date.now(),
-      name,
-      dose,
-      condition: condition || 'General Health',
-      time: time || '09:00 AM',
-      frequency: 'Daily',
-      instruction,
-      startDate: new Date().toISOString().split('T')[0],
-      notes,
-      status: 'Pending',
-    };
+    try {
+      const res = await fetch('/api/medicines', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          userId,
+          name,
+          dosage: dose,
+          frequency: 'Daily',
+          times: [time || '09:00 AM'],
+          notes,
+        }),
+      });
+      const data = await res.json();
+      if (data.success) {
+        fetchMedicines();
+      }
+    } catch (err) {
+      console.error('Error saving medicine to API:', err);
+    }
 
-    saveToStorage([...medicines, newMed]);
     setIsAddModalOpen(false);
-
-    // Reset Form
     setName('');
     setDose('');
     setCondition('');
@@ -89,22 +97,27 @@ export function MedicineManager() {
   };
 
   const handleToggleStatus = (id: string, newStatus: 'Taken' | 'Missed' | 'Pending') => {
-    const updated = medicines.map((m) => {
-      if (m.id === id) {
-        return {
-          ...m,
-          status: newStatus,
-          lastUpdated: newStatus === 'Taken' ? `Today, ${new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}` : m.lastUpdated,
-        };
-      }
-      return m;
-    });
-    saveToStorage(updated);
+    setMedicines((prev) =>
+      prev.map((m) => {
+        if (m.id === id) {
+          return {
+            ...m,
+            status: newStatus,
+            lastUpdated: newStatus === 'Taken' ? `Today, ${new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}` : m.lastUpdated,
+          };
+        }
+        return m;
+      })
+    );
   };
 
-  const handleDeleteMedicine = (id: string) => {
-    const updated = medicines.filter((m) => m.id !== id);
-    saveToStorage(updated);
+  const handleDeleteMedicine = async (id: string) => {
+    setMedicines((prev) => prev.filter((m) => m.id !== id));
+    try {
+      await fetch(`/api/medicines?id=${id}`, { method: 'DELETE' });
+    } catch (err) {
+      console.error('Error deleting medicine from API:', err);
+    }
   };
 
   const filteredMedicines = medicines.filter((m) => {

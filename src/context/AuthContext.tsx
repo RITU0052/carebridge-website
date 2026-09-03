@@ -16,6 +16,8 @@ interface AuthContextType {
   isAuthenticated: boolean;
   isLoading: boolean;
   login: (email: string, pass: string) => Promise<{ success: boolean; message?: string }>;
+  sendOtp: (email: string) => Promise<{ success: boolean; message?: string; otpDemoCode?: string }>;
+  verifyOtp: (email: string, code: string) => Promise<{ success: boolean; message?: string }>;
   signup: (name: string, email: string, pass: string, role: string) => Promise<{ success: boolean; message?: string }>;
   forgotPassword: (email: string) => Promise<{ success: boolean; message: string }>;
   verifyEmail: (code: string) => Promise<{ success: boolean; message?: string }>;
@@ -25,7 +27,6 @@ interface AuthContextType {
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
-  // Deterministic initial state on both Server and Client Initial Render to prevent hydration mismatch
   const [user, setUser] = useState<UserProfile | null>(null);
   const [isLoading, setIsLoading] = useState<boolean>(true);
 
@@ -47,43 +48,77 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   const login = async (email: string, pass: string) => {
     setIsLoading(true);
-    await new Promise((res) => setTimeout(res, 600));
-
-    if (!email || !pass) {
+    try {
+      const res = await fetch('/api/auth/login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email, password: pass }),
+      });
+      const data = await res.json();
       setIsLoading(false);
-      return { success: false, message: 'Please provide both email and password.' };
-    }
 
-    if (pass.length < 6) {
+      if (data.success && data.user) {
+        setUser(data.user);
+        localStorage.setItem('carebridge_session_user', JSON.stringify(data.user));
+        return { success: true };
+      }
+      return { success: false, message: data.message || 'Login failed. Please check your credentials.' };
+    } catch (err) {
+      console.error('Login error:', err);
       setIsLoading(false);
-      return { success: false, message: 'Password must be at least 6 characters.' };
+      return { success: false, message: 'Server communication error during login.' };
     }
+  };
 
-    const mockUser: UserProfile = {
-      id: 'usr_' + Math.random().toString(36).substring(2, 9),
-      name: email.split('@')[0].replace('.', ' ').replace(/\b\w/g, (l) => l.toUpperCase()),
-      email,
-      role: 'Caregiver',
-      isVerified: true,
-      createdAt: new Date().toISOString(),
-    };
+  const sendOtp = async (email: string) => {
+    try {
+      const res = await fetch('/api/auth/send-otp', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email }),
+      });
+      const data = await res.json();
+      return { success: data.success, message: data.message, otpDemoCode: data.otpDemoCode };
+    } catch (err) {
+      console.error('Send OTP error:', err);
+      return { success: false, message: 'Failed to send OTP. Please try again.' };
+    }
+  };
 
-    setUser(mockUser);
-    localStorage.setItem('carebridge_session_user', JSON.stringify(mockUser));
-    setIsLoading(false);
-    return { success: true };
+  const verifyOtp = async (email: string, code: string) => {
+    setIsLoading(true);
+    try {
+      const res = await fetch('/api/auth/verify-otp', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email, otpCode: code }),
+      });
+      const data = await res.json();
+      setIsLoading(false);
+
+      if (data.success && data.user) {
+        setUser(data.user);
+        localStorage.setItem('carebridge_session_user', JSON.stringify(data.user));
+        return { success: true };
+      }
+      return { success: false, message: data.message || 'Invalid or expired OTP code.' };
+    } catch (err) {
+      console.error('Verify OTP error:', err);
+      setIsLoading(false);
+      return { success: false, message: 'Server error verifying OTP code.' };
+    }
   };
 
   const signup = async (name: string, email: string, pass: string, role: string) => {
     setIsLoading(true);
-    await new Promise((res) => setTimeout(res, 600));
+    await new Promise((res) => setTimeout(res, 400));
 
     if (!name || !email || !pass) {
       setIsLoading(false);
       return { success: false, message: 'All required fields must be filled.' };
     }
 
-    const mockUser: UserProfile = {
+    const newUser: UserProfile = {
       id: 'usr_' + Math.random().toString(36).substring(2, 9),
       name,
       email,
@@ -92,25 +127,29 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       createdAt: new Date().toISOString(),
     };
 
-    setUser(mockUser);
-    localStorage.setItem('carebridge_session_user', JSON.stringify(mockUser));
+    setUser(newUser);
+    localStorage.setItem('carebridge_session_user', JSON.stringify(newUser));
     setIsLoading(false);
     return { success: true };
   };
 
   const forgotPassword = async (email: string) => {
-    await new Promise((res) => setTimeout(res, 500));
-    if (!email || !email.includes('@')) {
-      return { success: false, message: 'Please enter a valid email address.' };
+    try {
+      const res = await fetch('/api/auth/forgot-password', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email }),
+      });
+      const data = await res.json();
+      return { success: data.success, message: data.message };
+    } catch (err) {
+      console.error('Forgot password error:', err);
+      return { success: false, message: 'Failed to send password reset request.' };
     }
-    return {
-      success: true,
-      message: `Password reset instructions sent to ${email}. Please check your inbox.`,
-    };
   };
 
   const verifyEmail = async (code: string) => {
-    await new Promise((res) => setTimeout(res, 500));
+    await new Promise((res) => setTimeout(res, 300));
     if (!code || code.trim().length < 4) {
       return { success: false, message: 'Please enter a valid verification code.' };
     }
@@ -135,6 +174,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         isAuthenticated: !!user,
         isLoading,
         login,
+        sendOtp,
+        verifyOtp,
         signup,
         forgotPassword,
         verifyEmail,

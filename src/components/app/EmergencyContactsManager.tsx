@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { PhoneCall, ShieldAlert, Plus, Trash2, CheckCircle2, UserCheck, AlertTriangle, Phone } from 'lucide-react';
 import { useAuth } from '@/context/AuthContext';
 
@@ -15,8 +15,7 @@ export interface EmergencyContactItem {
 
 export function EmergencyContactsManager() {
   const { user } = useAuth();
-  const userId = user?.id || 'guest';
-  const storageKey = `carebridge_user_${userId}_contacts`;
+  const userId = user?.id || 'usr_demo_1';
 
   const [contacts, setContacts] = useState<EmergencyContactItem[]>([]);
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
@@ -30,50 +29,47 @@ export function EmergencyContactsManager() {
   const [email, setEmail] = useState('');
   const [isPrimary, setIsPrimary] = useState(false);
 
-  useEffect(() => {
-    const timer = setTimeout(() => {
-      try {
-        const stored = localStorage.getItem(storageKey);
-        if (stored) {
-          setContacts(JSON.parse(stored));
-        } else {
-          setContacts([]);
-        }
-      } catch (e) {
-        console.error('Error loading contacts:', e);
-      }
-    }, 0);
-    return () => clearTimeout(timer);
-  }, [storageKey]);
-
-  const saveContacts = (updated: EmergencyContactItem[]) => {
-    setContacts(updated);
+  const fetchContacts = useCallback(async () => {
     try {
-      localStorage.setItem(storageKey, JSON.stringify(updated));
-    } catch (e) {
-      console.error('Error saving contacts:', e);
+      const res = await fetch(`/api/emergency-contacts?userId=${userId}`);
+      const data = await res.json();
+      if (data.success && data.contacts) {
+        setContacts(data.contacts);
+      }
+    } catch (err) {
+      console.error('Error fetching emergency contacts:', err);
     }
-  };
+  }, [userId]);
 
-  const handleAddContact = (e: React.FormEvent) => {
+  useEffect(() => {
+    fetchContacts();
+  }, [fetchContacts]);
+
+  const handleAddContact = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!name || !phone) return;
 
-    let updated = [...contacts];
-    if (isPrimary) {
-      updated = updated.map((c) => ({ ...c, isPrimary: false }));
+    try {
+      const res = await fetch('/api/emergency-contacts', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          userId,
+          name,
+          relationship: relationship || 'Family',
+          phone,
+          email,
+          isPrimary: isPrimary || contacts.length === 0,
+        }),
+      });
+      const data = await res.json();
+      if (data.success) {
+        fetchContacts();
+      }
+    } catch (err) {
+      console.error('Error saving emergency contact:', err);
     }
 
-    const newContact: EmergencyContactItem = {
-      id: 'cnt_' + Date.now(),
-      name,
-      relationship: relationship || 'Family Member',
-      phone,
-      email,
-      isPrimary: isPrimary || contacts.length === 0,
-    };
-
-    saveContacts([...updated, newContact]);
     setIsAddModalOpen(false);
     setName('');
     setRelationship('');
@@ -82,17 +78,13 @@ export function EmergencyContactsManager() {
     setIsPrimary(false);
   };
 
-  const handleDeleteContact = (id: string) => {
-    const updated = contacts.filter((c) => c.id !== id);
-    saveContacts(updated);
-  };
-
-  const handleSetPrimary = (id: string) => {
-    const updated = contacts.map((c) => ({
-      ...c,
-      isPrimary: c.id === id,
-    }));
-    saveContacts(updated);
+  const handleDeleteContact = async (id: string) => {
+    setContacts((prev) => prev.filter((c) => c.id !== id));
+    try {
+      await fetch(`/api/emergency-contacts?id=${id}`, { method: 'DELETE' });
+    } catch (err) {
+      console.error('Error deleting contact from API:', err);
+    }
   };
 
   const handleTriggerAlert = () => {
@@ -212,15 +204,6 @@ export function EmergencyContactsManager() {
                   </p>
                   {contact.email && <p className="text-slate-500 text-[11px]">{contact.email}</p>}
                 </div>
-
-                {!contact.isPrimary && (
-                  <button
-                    onClick={() => handleSetPrimary(contact.id)}
-                    className="text-xs text-teal-700 hover:text-teal-900 font-semibold underline pt-1"
-                  >
-                    Set as Primary Contact
-                  </button>
-                )}
               </div>
             ))}
           </div>

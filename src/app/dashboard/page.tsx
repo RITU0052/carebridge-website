@@ -13,7 +13,8 @@ import {
   Activity,
   PhoneCall,
   HeartHandshake,
-  LayoutDashboard
+  LayoutDashboard,
+  Calendar
 } from 'lucide-react';
 import { useAuth } from '@/context/AuthContext';
 import { Breadcrumbs } from '@/components/ui/Breadcrumbs';
@@ -21,11 +22,12 @@ import { MedicineManager } from '@/components/app/MedicineManager';
 import { HealthVitalsManager } from '@/components/app/HealthVitalsManager';
 import { EmergencyContactsManager } from '@/components/app/EmergencyContactsManager';
 import { CaregiverPermissionsManager } from '@/components/app/CaregiverPermissionsManager';
+import { DailySummaryWidget } from '@/components/app/DailySummaryWidget';
 
 export default function DashboardPage() {
   const { user, isAuthenticated, isLoading, logout } = useAuth();
   const router = useRouter();
-  const [activeTab, setActiveTab] = useState<'overview' | 'medicine' | 'vitals' | 'emergency' | 'caregivers' | 'reports'>('overview');
+  const [activeTab, setActiveTab] = useState<'overview' | 'summary' | 'medicine' | 'vitals' | 'emergency' | 'caregivers' | 'reports'>('overview');
 
   useEffect(() => {
     if (!isLoading && !isAuthenticated) {
@@ -121,6 +123,7 @@ export default function DashboardPage() {
         <div className="bg-white rounded-2xl p-2 border border-slate-200 shadow-sm flex items-center gap-1 overflow-x-auto">
           {[
             { id: 'overview', label: 'Overview', icon: LayoutDashboard },
+            { id: 'summary', label: 'Daily Summary', icon: Calendar },
             { id: 'medicine', label: 'Medicine Schedule', icon: Pill },
             { id: 'vitals', label: 'Health Vitals', icon: Activity },
             { id: 'emergency', label: 'Emergency Support', icon: PhoneCall },
@@ -146,6 +149,8 @@ export default function DashboardPage() {
         </div>
 
         {/* Tab Content Workspace */}
+        {activeTab === 'summary' && <DailySummaryWidget />}
+
         {activeTab === 'medicine' && <MedicineManager />}
 
         {activeTab === 'vitals' && <HealthVitalsManager />}
@@ -180,6 +185,7 @@ export default function DashboardPage() {
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
             {/* Left 2 Columns */}
             <div className="lg:col-span-2 space-y-8">
+              <DailySummaryWidget />
               <MedicineManager />
               <HealthVitalsManager />
             </div>
