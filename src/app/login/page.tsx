@@ -16,6 +16,7 @@ export default function LoginPage() {
   const [otpSent, setOtpSent] = useState(false);
   const [otpNotice, setOtpNotice] = useState('');
   const [error, setError] = useState('');
+  const [userNotFound, setUserNotFound] = useState(false);
   const [loading, setLoading] = useState(false);
 
   const { login, sendOtp, verifyOtp } = useAuth();
@@ -24,6 +25,7 @@ export default function LoginPage() {
   const handlePasswordSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError('');
+    setUserNotFound(false);
 
     if (!email || !email.includes('@')) {
       setError('Please enter a valid email address.');
@@ -36,12 +38,16 @@ export default function LoginPage() {
     }
 
     setLoading(true);
-    const result = await login(email, password);
+    const cleanEmail = email.trim().toLowerCase();
+    const result = await login(cleanEmail, password);
     setLoading(false);
 
     if (result.success) {
       router.push('/dashboard');
     } else {
+      if (result.code === 'USER_NOT_FOUND') {
+        setUserNotFound(true);
+      }
       setError(result.message || 'Login failed. Please check your credentials.');
     }
   };
@@ -49,6 +55,7 @@ export default function LoginPage() {
   const handleSendOtp = async (e: React.FormEvent) => {
     e.preventDefault();
     setError('');
+    setUserNotFound(false);
     setOtpNotice('');
 
     if (!email || !email.includes('@')) {
@@ -57,13 +64,17 @@ export default function LoginPage() {
     }
 
     setLoading(true);
-    const result = await sendOtp(email);
+    const cleanEmail = email.trim().toLowerCase();
+    const result = await sendOtp(cleanEmail, 'login');
     setLoading(false);
 
     if (result.success) {
       setOtpSent(true);
       setOtpNotice(result.message || 'OTP sent successfully!');
     } else {
+      if (result.code === 'USER_NOT_FOUND') {
+        setUserNotFound(true);
+      }
       setError(result.message || 'Failed to send OTP email.');
     }
   };
@@ -78,7 +89,8 @@ export default function LoginPage() {
     }
 
     setLoading(true);
-    const result = await verifyOtp(email, otpCode);
+    const cleanEmail = email.trim().toLowerCase();
+    const result = await verifyOtp(cleanEmail, otpCode, 'login');
     setLoading(false);
 
     if (result.success) {
@@ -143,9 +155,22 @@ export default function LoginPage() {
       <div className="mt-8 sm:mx-auto sm:w-full sm:max-w-md px-4 sm:px-0">
         <div className="bg-white py-8 px-6 shadow-xl shadow-slate-200/60 rounded-3xl border border-slate-200/80 sm:px-10">
           {error && (
-            <div className="mb-6 p-4 rounded-2xl bg-rose-50 border border-rose-200 flex items-start gap-3 text-rose-800 text-sm">
-              <AlertCircle className="w-5 h-5 text-rose-600 shrink-0 mt-0.5" />
-              <span>{error}</span>
+            <div className="mb-6 p-4 rounded-2xl bg-rose-50 border border-rose-200 flex flex-col gap-2 text-rose-800 text-sm">
+              <div className="flex items-start gap-3">
+                <AlertCircle className="w-5 h-5 text-rose-600 shrink-0 mt-0.5" />
+                <span className="font-medium">{error}</span>
+              </div>
+              {userNotFound && (
+                <div className="mt-2 pt-2 border-t border-rose-200 flex justify-end">
+                  <Link
+                    href="/signup"
+                    className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-teal-600 hover:bg-teal-700 text-white rounded-lg font-bold text-xs shadow-sm transition-all"
+                  >
+                    <span>Create Account Now</span>
+                    <ArrowRight className="w-3.5 h-3.5" />
+                  </Link>
+                </div>
+              )}
             </div>
           )}
 

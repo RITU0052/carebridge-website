@@ -15,12 +15,12 @@ interface AuthContextType {
   user: UserProfile | null;
   isAuthenticated: boolean;
   isLoading: boolean;
-  login: (email: string, pass: string) => Promise<{ success: boolean; message?: string }>;
-  sendOtp: (email: string) => Promise<{ success: boolean; message?: string; otpDemoCode?: string }>;
-  verifyOtp: (email: string, code: string) => Promise<{ success: boolean; message?: string }>;
-  signup: (name: string, email: string, pass: string, role: string) => Promise<{ success: boolean; message?: string }>;
+  login: (email: string, pass: string) => Promise<{ success: boolean; message?: string; code?: string }>;
+  sendOtp: (email: string, purpose?: 'login' | 'signup') => Promise<{ success: boolean; message?: string; code?: string }>;
+  verifyOtp: (email: string, code: string, purpose?: 'login' | 'signup') => Promise<{ success: boolean; message?: string }>;
+  signup: (name: string, email: string, pass: string, role: string) => Promise<{ success: boolean; message?: string; code?: string }>;
   forgotPassword: (email: string) => Promise<{ success: boolean; message: string }>;
-  verifyEmail: (code: string) => Promise<{ success: boolean; message?: string }>;
+  verifyEmail: (code: string, targetEmail?: string) => Promise<{ success: boolean; message?: string }>;
   logout: () => void;
 }
 
@@ -62,7 +62,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         localStorage.setItem('carebridge_session_user', JSON.stringify(data.user));
         return { success: true };
       }
-      return { success: false, message: data.message || 'Login failed. Please check your credentials.' };
+      return { success: false, message: data.message || 'Login failed. Please check your credentials.', code: data.code };
     } catch (err) {
       console.error('Login error:', err);
       setIsLoading(false);
@@ -70,28 +70,28 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }
   };
 
-  const sendOtp = async (email: string) => {
+  const sendOtp = async (email: string, purpose: 'login' | 'signup' = 'login') => {
     try {
       const res = await fetch('/api/auth/send-otp', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email }),
+        body: JSON.stringify({ email, purpose }),
       });
       const data = await res.json();
-      return { success: data.success, message: data.message, otpDemoCode: data.otpDemoCode };
+      return { success: data.success, message: data.message, code: data.code };
     } catch (err) {
       console.error('Send OTP error:', err);
       return { success: false, message: 'Failed to send OTP. Please try again.' };
     }
   };
 
-  const verifyOtp = async (email: string, code: string) => {
+  const verifyOtp = async (email: string, code: string, purpose: 'login' | 'signup' = 'login') => {
     setIsLoading(true);
     try {
       const res = await fetch('/api/auth/verify-otp', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email, otpCode: code }),
+        body: JSON.stringify({ email, otpCode: code, purpose }),
       });
       const data = await res.json();
       setIsLoading(false);
@@ -99,7 +99,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       if (data.success && data.user) {
         setUser(data.user);
         localStorage.setItem('carebridge_session_user', JSON.stringify(data.user));
-        return { success: true };
+        return { success: true, message: data.message };
       }
       return { success: false, message: data.message || 'Invalid or expired OTP code.' };
     } catch (err) {
@@ -111,26 +111,24 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   const signup = async (name: string, email: string, pass: string, role: string) => {
     setIsLoading(true);
-    await new Promise((res) => setTimeout(res, 400));
-
-    if (!name || !email || !pass) {
+    try {
+      const res = await fetch('/api/auth/send-otp', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name, email, password: pass, role, purpose: 'signup' }),
+      });
+      const data = await res.json();
       setIsLoading(false);
-      return { success: false, message: 'All required fields must be filled.' };
+
+      if (data.success) {
+        return { success: true, message: data.message };
+      }
+      return { success: false, message: data.message || 'Signup request failed.', code: data.code };
+    } catch (err) {
+      console.error('Signup error:', err);
+      setIsLoading(false);
+      return { success: false, message: 'Server communication error during signup.' };
     }
-
-    const newUser: UserProfile = {
-      id: 'usr_' + Math.random().toString(36).substring(2, 9),
-      name,
-      email,
-      role: role || 'Caregiver',
-      isVerified: false,
-      createdAt: new Date().toISOString(),
-    };
-
-    setUser(newUser);
-    localStorage.setItem('carebridge_session_user', JSON.stringify(newUser));
-    setIsLoading(false);
-    return { success: true };
   };
 
   const forgotPassword = async (email: string) => {
@@ -148,18 +146,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }
   };
 
-  const verifyEmail = async (code: string) => {
-    await new Promise((res) => setTimeout(res, 300));
-    if (!code || code.trim().length < 4) {
-      return { success: false, message: 'Please enter a valid verification code.' };
+  const verifyEmail = async (code: string, targetEmail?: string) => {
+    const emailToVerify = targetEmail || user?.email;
+    if (!emailToVerify) {
+      return { success: false, message: 'No pending email address found for verification.' };
     }
-
-    if (user) {
-      const updatedUser = { ...user, isVerified: true };
-      setUser(updatedUser);
-      localStorage.setItem('carebridge_session_user', JSON.stringify(updatedUser));
-    }
-    return { success: true, message: 'Email address verified successfully!' };
+    return await verifyOtp(emailToVerify, code, 'signup');
   };
 
   const logout = () => {

@@ -12,9 +12,11 @@ export default function SignUpPage() {
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
   const [role, setRole] = useState('Caregiver');
   const [termsAgreed, setTermsAgreed] = useState(false);
   const [error, setError] = useState('');
+  const [userExistsError, setUserExistsError] = useState(false);
   const [loading, setLoading] = useState(false);
 
   const { signup } = useAuth();
@@ -23,6 +25,7 @@ export default function SignUpPage() {
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError('');
+    setUserExistsError(false);
 
     if (!name.trim()) {
       setError('Please enter your full name.');
@@ -39,18 +42,27 @@ export default function SignUpPage() {
       return;
     }
 
+    if (password !== confirmPassword) {
+      setError('Passwords do not match. Please verify your password.');
+      return;
+    }
+
     if (!termsAgreed) {
       setError('You must agree to the Terms of Service and Privacy Policy.');
       return;
     }
 
     setLoading(true);
-    const result = await signup(name, email, password, role);
+    const cleanEmail = email.trim().toLowerCase();
+    const result = await signup(name.trim(), cleanEmail, password, role);
     setLoading(false);
 
     if (result.success) {
-      router.push('/verify-email');
+      router.push(`/verify-email?email=${encodeURIComponent(cleanEmail)}`);
     } else {
+      if (result.code === 'USER_EXISTS') {
+        setUserExistsError(true);
+      }
       setError(result.message || 'Registration failed. Please try again.');
     }
   };
@@ -83,9 +95,22 @@ export default function SignUpPage() {
       <div className="mt-8 sm:mx-auto sm:w-full sm:max-w-md px-4 sm:px-0">
         <div className="bg-white py-8 px-6 shadow-xl shadow-slate-200/60 rounded-3xl border border-slate-200/80 sm:px-10">
           {error && (
-            <div className="mb-6 p-4 rounded-2xl bg-rose-50 border border-rose-200 flex items-start gap-3 text-rose-800 text-sm">
-              <AlertCircle className="w-5 h-5 text-rose-600 shrink-0 mt-0.5" />
-              <span>{error}</span>
+            <div className="mb-6 p-4 rounded-2xl bg-rose-50 border border-rose-200 flex flex-col gap-2 text-rose-800 text-sm">
+              <div className="flex items-start gap-3">
+                <AlertCircle className="w-5 h-5 text-rose-600 shrink-0 mt-0.5" />
+                <span className="font-medium">{error}</span>
+              </div>
+              {userExistsError && (
+                <div className="mt-2 pt-2 border-t border-rose-200 flex justify-end">
+                  <Link
+                    href="/login"
+                    className="inline-flex items-center gap-1 text-xs font-bold text-teal-700 hover:text-teal-900 underline"
+                  >
+                    <span>Log In to Existing Account</span>
+                    <ArrowRight className="w-3.5 h-3.5" />
+                  </Link>
+                </div>
+              )}
             </div>
           )}
 
@@ -177,6 +202,27 @@ export default function SignUpPage() {
               </div>
             </div>
 
+            <div>
+              <label htmlFor="confirmPassword" className="block text-xs font-bold uppercase tracking-wider text-slate-700 mb-1.5">
+                Confirm Password <span className="text-rose-500">*</span>
+              </label>
+              <div className="relative rounded-xl shadow-sm">
+                <div className="absolute inset-y-0 left-0 pl-3.5 flex items-center pointer-events-none text-slate-400">
+                  <Lock className="h-5 w-5" />
+                </div>
+                <input
+                  id="confirmPassword"
+                  name="confirmPassword"
+                  type="password"
+                  required
+                  value={confirmPassword}
+                  onChange={(e) => setConfirmPassword(e.target.value)}
+                  placeholder="Re-enter password"
+                  className="block w-full pl-10 pr-4 py-3 border border-slate-300 rounded-xl leading-5 bg-white text-slate-900 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-teal-600 focus:border-teal-600 sm:text-sm transition-all"
+                />
+              </div>
+            </div>
+
             <div className="flex items-start">
               <div className="flex items-center h-5">
                 <input
@@ -208,10 +254,10 @@ export default function SignUpPage() {
                 className="w-full flex justify-center items-center gap-2 py-3.5 px-4 border border-transparent rounded-xl shadow-md text-base font-bold text-white bg-teal-600 hover:bg-teal-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-teal-500 transition-all disabled:opacity-60"
               >
                 {loading ? (
-                  <span>Creating Account...</span>
+                  <span>Sending Verification Code...</span>
                 ) : (
                   <>
-                    <span>Create Account &amp; Verify</span>
+                    <span>Create Account &amp; Send OTP</span>
                     <ArrowRight className="w-5 h-5" />
                   </>
                 )}

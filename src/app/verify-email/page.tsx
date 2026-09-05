@@ -1,34 +1,43 @@
 'use client';
 
-import React, { useState } from 'react';
+import React, { useState, Suspense } from 'react';
 import Link from 'next/link';
 import Image from 'next/image';
-import { useRouter } from 'next/navigation';
+import { useRouter, useSearchParams } from 'next/navigation';
 import { Mail, CheckCircle2, AlertCircle, ArrowRight, ShieldCheck, RefreshCw } from 'lucide-react';
 import { useAuth } from '@/context/AuthContext';
 import { Breadcrumbs } from '@/components/ui/Breadcrumbs';
 
-export default function VerifyEmailPage() {
+function VerifyEmailForm() {
+  const searchParams = useSearchParams();
+  const emailParam = searchParams.get('email') || '';
   const [code, setCode] = useState('');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
   const [resent, setResent] = useState(false);
   const [verifiedSuccess, setVerifiedSuccess] = useState(false);
 
-  const { user, verifyEmail } = useAuth();
+  const { user, verifyEmail, sendOtp } = useAuth();
   const router = useRouter();
+
+  const activeEmail = emailParam || user?.email || '';
 
   const handleVerify = async (e: React.FormEvent) => {
     e.preventDefault();
     setError('');
 
-    if (!code || code.length < 4) {
-      setError('Please enter a 6-digit verification code (e.g. 123456).');
+    if (!code || code.length < 6) {
+      setError('Please enter your 6-digit verification code.');
+      return;
+    }
+
+    if (!activeEmail) {
+      setError('Missing email address context. Please register on the Sign Up page first.');
       return;
     }
 
     setLoading(true);
-    const result = await verifyEmail(code);
+    const result = await verifyEmail(code, activeEmail);
     setLoading(false);
 
     if (result.success) {
@@ -37,13 +46,23 @@ export default function VerifyEmailPage() {
         router.push('/dashboard');
       }, 1500);
     } else {
-      setError(result.message || 'Verification failed. Please check your code.');
+      setError(result.message || 'Verification failed. Please check your code and try again.');
     }
   };
 
-  const handleResend = () => {
-    setResent(true);
-    setTimeout(() => setResent(false), 5000);
+  const handleResend = async () => {
+    if (!activeEmail) {
+      setError('No email address found to resend verification code.');
+      return;
+    }
+    setError('');
+    const res = await sendOtp(activeEmail, 'signup');
+    if (res.success) {
+      setResent(true);
+      setTimeout(() => setResent(false), 5000);
+    } else {
+      setError(res.message || 'Unable to resend verification code.');
+    }
   };
 
   return (
@@ -72,7 +91,7 @@ export default function VerifyEmailPage() {
           </h1>
           <p className="mt-2 text-center text-sm text-slate-600 max-w-sm mx-auto">
             We sent a security verification code to{' '}
-            <span className="font-bold text-slate-900">{user?.email || 'your email address'}</span>.
+            <span className="font-bold text-slate-900">{activeEmail || 'your email address'}</span>.
           </p>
         </div>
       </div>
@@ -126,9 +145,6 @@ export default function VerifyEmailPage() {
                     placeholder="123456"
                     className="block w-full text-center text-2xl font-mono tracking-widest py-3 border border-slate-300 rounded-xl bg-slate-50 text-slate-900 focus:outline-none focus:ring-2 focus:ring-teal-600 focus:bg-white focus:border-teal-600 transition-all"
                   />
-                  <p className="text-[11px] text-slate-500 text-center mt-2">
-                    Tip: Enter any 4-6 digit code for UI demo verification.
-                  </p>
                 </div>
 
                 <div>
@@ -173,5 +189,13 @@ export default function VerifyEmailPage() {
         </div>
       </div>
     </div>
+  );
+}
+
+export default function VerifyEmailPage() {
+  return (
+    <Suspense fallback={<div className="min-h-[85vh] flex items-center justify-center text-slate-600">Loading...</div>}>
+      <VerifyEmailForm />
+    </Suspense>
   );
 }

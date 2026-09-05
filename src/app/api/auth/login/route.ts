@@ -19,25 +19,19 @@ export async function POST(req: NextRequest) {
     let user = db.users.find((u) => u.email.toLowerCase() === cleanEmail);
 
     if (!user) {
-      // Auto-provision initial account for smooth onboarding while hashing password
-      const initialHash = await hashPassword(password);
-      user = {
-        id: 'usr_' + Math.random().toString(36).substring(2, 9),
-        name: cleanEmail.split('@')[0].replace('.', ' ').replace(/\b\w/g, (l: string) => l.toUpperCase()),
-        email: cleanEmail,
-        passwordHash: initialHash,
-        role: 'Caregiver',
-        isVerified: true,
-        createdAt: new Date().toISOString(),
-      };
-      db.users.push(user);
-      writeDB(db);
-    } else {
-      const isPasswordValid = await verifyPassword(password, user.passwordHash);
-      if (!isPasswordValid) {
-        // Generic response to prevent account enumeration
-        return NextResponse.json({ success: false, message: 'Incorrect email or password.' }, { status: 401 });
-      }
+      return NextResponse.json(
+        {
+          success: false,
+          code: 'USER_NOT_FOUND',
+          message: 'No account found with this email. Please create an account first.',
+        },
+        { status: 401 }
+      );
+    }
+
+    const isPasswordValid = await verifyPassword(password, user.passwordHash);
+    if (!isPasswordValid) {
+      return NextResponse.json({ success: false, message: 'Incorrect email or password.' }, { status: 401 });
     }
 
     // Omit sensitive hashes and tokens

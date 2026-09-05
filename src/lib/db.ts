@@ -150,8 +150,21 @@ export interface OverdueReminderLogRecord {
   sentAt: string;
 }
 
+export interface PendingSignupRecord {
+  id: string;
+  name: string;
+  email: string;
+  passwordHash: string;
+  role: 'Patient' | 'Caregiver' | 'Doctor' | 'Family Member' | 'Admin';
+  otpCode: string;
+  otpExpiresAt: string;
+  attempts?: number;
+  createdAt: string;
+}
+
 export interface DatabaseSchema {
   users: UserRecord[];
+  pendingSignups?: PendingSignupRecord[];
   medicines: MedicineRecord[];
   vitals: VitalRecord[];
   reports: ReportRecord[];
@@ -399,6 +412,7 @@ export function readDB(): DatabaseSchema {
       const parsed = JSON.parse(fileContent) as Partial<DatabaseSchema>;
       cachedDbMemory = {
         users: parsed.users || [],
+        pendingSignups: parsed.pendingSignups || [],
         medicines: parsed.medicines || [],
         vitals: parsed.vitals || [],
         reports: parsed.reports || [],
