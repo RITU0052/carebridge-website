@@ -1,8 +1,13 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { readDB, writeDB } from '@/lib/db';
+import { hashPassword } from '@/lib/passwords';
+import { checkRateLimit } from '@/lib/rateLimit';
 
 export async function POST(req: NextRequest) {
   try {
+    const rateCheck = checkRateLimit(req, 'reset-password', 5, 60 * 1000);
+    if (!rateCheck.allowed && rateCheck.response) return rateCheck.response;
+
     const { token, newPassword } = await req.json();
 
     if (!token || !newPassword || newPassword.length < 6) {
@@ -20,7 +25,8 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ success: false, message: 'Reset token has expired. Please request a new password reset.' }, { status: 400 });
     }
 
-    user.passwordHash = newPassword;
+    // Hash new password using bcrypt
+    user.passwordHash = await hashPassword(newPassword);
     user.resetToken = null;
     user.resetExpiresAt = null;
     writeDB(db);

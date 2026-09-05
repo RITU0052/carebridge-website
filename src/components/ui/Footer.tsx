@@ -37,21 +37,30 @@ export function Footer() {
                   support.carebridge@gmail.com
                 </a>
               </div>
-              <div className="flex items-center gap-2">
-                <Phone className="w-4 h-4 text-teal-400 shrink-0" />
-                <a href="tel:+917042363267" className="hover:text-teal-300 transition-colors">
-                  +91 7042363267
-                </a>
-                <span>•</span>
-                <a
-                  href="https://wa.me/917042363267?text=Hello%20CareBridge%2C%20I%20have%20a%20query%20regarding%20your%20platform."
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  aria-label="Chat with CareBridge on WhatsApp"
-                  className="font-bold text-emerald-400 hover:text-emerald-300 transition-colors"
-                >
-                  WhatsApp Support
-                </a>
+              <div className="flex items-start gap-2">
+                <Phone className="w-4 h-4 text-teal-400 shrink-0 mt-0.5" />
+                <div className="space-y-0.5">
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <a href="tel:+917042363267" className="hover:text-teal-300 transition-colors font-medium">
+                      +91 7042363267
+                    </a>
+                    <span>•</span>
+                    <a href="tel:+919953920052" className="hover:text-teal-300 transition-colors font-medium">
+                      +91 9953920052
+                    </a>
+                  </div>
+                  <div>
+                    <a
+                      href="https://wa.me/917042363267?text=Hello%20CareBridge%20Support%2C%20I%20need%20help%20with%20CareBridge."
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      aria-label="Chat with CareBridge Support on WhatsApp"
+                      className="font-bold text-emerald-400 hover:text-emerald-300 transition-colors text-xs"
+                    >
+                      WhatsApp Support (+91 7042363267)
+                    </a>
+                  </div>
+                </div>
               </div>
             </div>
           </div>
@@ -124,6 +133,21 @@ export function Footer() {
           <div className="space-y-3">
             <p className="text-white font-semibold text-sm uppercase tracking-wider">Support & Legal</p>
             <ul className="space-y-2 text-sm text-slate-400">
+              <li>
+                <Link href="/feedback" className="hover:text-teal-400 transition-colors text-teal-300 font-medium">
+                  Give Feedback
+                </Link>
+              </li>
+              <li>
+                <Link href="/how-to-use" className="hover:text-teal-400 transition-colors">
+                  How to Use CareBridge
+                </Link>
+              </li>
+              <li>
+                <Link href="/help" className="hover:text-teal-400 transition-colors">
+                  Help & Getting Started
+                </Link>
+              </li>
               <li>
                 <Link href="/contact" className="hover:text-teal-400 transition-colors">
                   Contact Support

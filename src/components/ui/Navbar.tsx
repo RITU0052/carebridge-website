@@ -156,6 +156,33 @@ export function Navbar() {
             </Link>
 
             <Link
+              href="/how-to-use"
+              className={`px-3 py-2 rounded-lg text-sm hover:text-teal-700 hover:bg-slate-50 transition-colors ${
+                pathname === '/how-to-use' ? 'text-teal-700 font-semibold bg-teal-50/60' : ''
+              }`}
+            >
+              How to Use
+            </Link>
+
+            <Link
+              href="/help"
+              className={`px-3 py-2 rounded-lg text-sm hover:text-teal-700 hover:bg-slate-50 transition-colors ${
+                pathname === '/help' ? 'text-teal-700 font-semibold bg-teal-50/60' : ''
+              }`}
+            >
+              Help
+            </Link>
+
+            <Link
+              href="/feedback"
+              className={`px-3 py-2 rounded-lg text-sm hover:text-teal-700 hover:bg-slate-50 transition-colors ${
+                pathname === '/feedback' ? 'text-teal-700 font-semibold bg-teal-50/60' : ''
+              }`}
+            >
+              Feedback
+            </Link>
+
+            <Link
               href="/contact"
               className={`px-3 py-2 rounded-lg text-sm hover:text-teal-700 hover:bg-slate-50 transition-colors ${
                 pathname === '/contact' ? 'text-teal-700 font-semibold bg-teal-50/60' : ''
@@ -263,6 +290,15 @@ export function Navbar() {
               </Link>
               <Link href="/about" onClick={closeMenu} className="block px-3 py-2 rounded-xl text-base font-semibold text-slate-900 hover:bg-teal-50">
                 About
+              </Link>
+              <Link href="/how-to-use" onClick={closeMenu} className="block px-3 py-2 rounded-xl text-base font-semibold text-slate-900 hover:bg-teal-50">
+                How to Use
+              </Link>
+              <Link href="/help" onClick={closeMenu} className="block px-3 py-2 rounded-xl text-base font-semibold text-slate-900 hover:bg-teal-50">
+                Help & Guide
+              </Link>
+              <Link href="/feedback" onClick={closeMenu} className="block px-3 py-2 rounded-xl text-base font-semibold text-slate-900 hover:bg-teal-50">
+                Give Feedback
               </Link>
               <Link href="/contact" onClick={closeMenu} className="block px-3 py-2 rounded-xl text-base font-semibold text-slate-900 hover:bg-teal-50">
                 Contact

@@ -69,8 +69,10 @@ export interface FeedbackRecord {
   name: string;
   email: string;
   rating: number;
-  category: 'General' | 'Feature Request' | 'Bug Report' | 'Medical Reminder' | 'App Feedback';
+  category: string;
   message: string;
+  notificationPreference?: 'whatsapp' | 'email' | 'both' | 'unsure';
+  whatsappNumber?: string;
   status: 'New' | 'In Progress' | 'Resolved';
   createdAt: string;
 }
@@ -81,11 +83,74 @@ export interface EmailLogRecord {
   recipient: string;
   subject: string;
   body: string;
-  status: 'SENT' | 'SIMULATED';
+  status: 'SENT' | 'FAILED' | 'SIMULATED';
   sentAt: string;
 }
 
-interface DatabaseSchema {
+export interface CaregiverRelationshipRecord {
+  id: string;
+  patientUserId: string;
+  caregiverUserId?: string;
+  caregiverName: string;
+  caregiverPhone: string; // E.164 format (+91...)
+  caregiverEmail?: string;
+  relationship: string;
+  accessLevel: 'Full Access' | 'Adherence Only' | 'Reports & Vitals Only';
+  whatsappAlertsEnabled: boolean;
+  emailAlertsEnabled: boolean;
+  createdAt: string;
+}
+
+export interface UserNotificationPreferences {
+  userId: string;
+  medicineReminders: boolean;
+  caregiverStatusAlerts: boolean;
+  dailySummary: boolean;
+  emailNotifications: boolean;
+  whatsappNotifications: boolean;
+  includeMedicineNameInAlerts: boolean;
+  timezone: string; // Default 'Asia/Kolkata'
+}
+
+export interface NotificationLogRecord {
+  id: string;
+  userId?: string;
+  type:
+    | 'otp'
+    | 'password_reset'
+    | 'feedback_admin_notification'
+    | 'feedback_confirmation'
+    | 'medicine_taken'
+    | 'medicine_skipped'
+    | 'medicine_overdue'
+    | 'daily_summary';
+  recipient: string;
+  channel: 'email' | 'whatsapp' | 'in_app' | 'browser_push';
+  status: 'SENT' | 'FAILED' | 'NOT_CONFIGURED' | 'SIMULATED';
+  failureReason?: string;
+  sentAt: string;
+}
+
+export interface MedicineAdherenceLogRecord {
+  id: string;
+  userId: string;
+  medicineId: string;
+  medicineName: string;
+  scheduledTime: string;
+  status: 'Taken' | 'Skipped' | 'Missed';
+  recordedAt: string;
+}
+
+export interface OverdueReminderLogRecord {
+  id: string;
+  userId: string;
+  medicineId: string;
+  scheduledDate: string;
+  scheduledTime: string;
+  sentAt: string;
+}
+
+export interface DatabaseSchema {
   users: UserRecord[];
   medicines: MedicineRecord[];
   vitals: VitalRecord[];
@@ -93,6 +158,26 @@ interface DatabaseSchema {
   emergencyContacts: EmergencyContactRecord[];
   feedback: FeedbackRecord[];
   emailLogs: EmailLogRecord[];
+  caregiverRelationships: CaregiverRelationshipRecord[];
+  notificationPreferences: UserNotificationPreferences[];
+  notificationLogs: NotificationLogRecord[];
+  adherenceLogs: MedicineAdherenceLogRecord[];
+  overdueReminderLogs: OverdueReminderLogRecord[];
+}
+
+export function normalizePhoneNumber(phone: string): string {
+  if (!phone) return '';
+  const digits = phone.replace(/[^\d+]/g, '');
+  if (digits.startsWith('+')) {
+    return digits;
+  }
+  if (digits.length === 10) {
+    return `+91${digits}`;
+  }
+  if (digits.startsWith('91') && digits.length === 12) {
+    return `+${digits}`;
+  }
+  return `+${digits}`;
 }
 
 const DATA_DIR = path.join(process.cwd(), 'data');
@@ -104,7 +189,6 @@ const INITIAL_DB: DatabaseSchema = {
       id: 'usr_demo_1',
       name: 'Sarah Jenkins',
       email: 'sarah@example.com',
-      // Simple hash for password 'password123'
       passwordHash: 'password123',
       role: 'Caregiver',
       isVerified: true,
@@ -196,7 +280,7 @@ const INITIAL_DB: DatabaseSchema = {
       userId: 'usr_demo_1',
       name: 'David Jenkins',
       relationship: 'Son / Secondary Caregiver',
-      phone: '+1 (555) 987-6543',
+      phone: '+919876543210',
       email: 'david.j@example.com',
       isPrimary: false,
       createdAt: new Date().toISOString(),
@@ -216,6 +300,35 @@ const INITIAL_DB: DatabaseSchema = {
     },
   ],
   emailLogs: [],
+  caregiverRelationships: [
+    {
+      id: 'rel_1',
+      patientUserId: 'usr_demo_1',
+      caregiverName: 'David Jenkins',
+      caregiverPhone: '+919876543210',
+      caregiverEmail: 'david.j@example.com',
+      relationship: 'Son / Caregiver',
+      accessLevel: 'Full Access',
+      whatsappAlertsEnabled: true,
+      emailAlertsEnabled: true,
+      createdAt: new Date().toISOString(),
+    },
+  ],
+  notificationPreferences: [
+    {
+      userId: 'usr_demo_1',
+      medicineReminders: true,
+      caregiverStatusAlerts: true,
+      dailySummary: true,
+      emailNotifications: true,
+      whatsappNotifications: true,
+      includeMedicineNameInAlerts: true,
+      timezone: 'Asia/Kolkata',
+    },
+  ],
+  notificationLogs: [],
+  adherenceLogs: [],
+  overdueReminderLogs: [],
 };
 
 function ensureDBFileExists(): void {
@@ -235,7 +348,21 @@ export function readDB(): DatabaseSchema {
   ensureDBFileExists();
   try {
     const fileContent = fs.readFileSync(DB_FILE, 'utf-8');
-    return JSON.parse(fileContent) as DatabaseSchema;
+    const parsed = JSON.parse(fileContent) as Partial<DatabaseSchema>;
+    return {
+      users: parsed.users || [],
+      medicines: parsed.medicines || [],
+      vitals: parsed.vitals || [],
+      reports: parsed.reports || [],
+      emergencyContacts: parsed.emergencyContacts || [],
+      feedback: parsed.feedback || [],
+      emailLogs: parsed.emailLogs || [],
+      caregiverRelationships: parsed.caregiverRelationships || [],
+      notificationPreferences: parsed.notificationPreferences || [],
+      notificationLogs: parsed.notificationLogs || [],
+      adherenceLogs: parsed.adherenceLogs || [],
+      overdueReminderLogs: parsed.overdueReminderLogs || [],
+    };
   } catch (err) {
     console.error('Error reading database file, returning initial database:', err);
     return INITIAL_DB;

@@ -96,19 +96,35 @@ export function MedicineManager() {
     setNotes('');
   };
 
-  const handleToggleStatus = (id: string, newStatus: 'Taken' | 'Missed' | 'Pending') => {
+  const handleToggleStatus = async (id: string, newStatus: 'Taken' | 'Missed' | 'Pending') => {
+    const med = medicines.find((m) => m.id === id);
     setMedicines((prev) =>
       prev.map((m) => {
         if (m.id === id) {
           return {
             ...m,
             status: newStatus,
-            lastUpdated: newStatus === 'Taken' ? `Today, ${new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}` : m.lastUpdated,
+            lastUpdated: newStatus !== 'Pending' ? `Today, ${new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}` : undefined,
           };
         }
         return m;
       })
     );
+
+    try {
+      await fetch('/api/medicines/status', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          medicineId: id,
+          status: newStatus === 'Missed' ? 'Skipped' : newStatus,
+          userId,
+          scheduledTime: med?.time || '08:00 AM',
+        }),
+      });
+    } catch (err) {
+      console.error('Error sending medicine status to API:', err);
+    }
   };
 
   const handleDeleteMedicine = async (id: string) => {

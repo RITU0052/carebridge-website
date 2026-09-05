@@ -1,8 +1,13 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { readDB, writeDB } from '@/lib/db';
+import { verifyPassword, hashPassword } from '@/lib/passwords';
+import { checkRateLimit } from '@/lib/rateLimit';
 
 export async function POST(req: NextRequest) {
   try {
+    const rateCheck = checkRateLimit(req, 'login', 10, 60 * 1000);
+    if (!rateCheck.allowed && rateCheck.response) return rateCheck.response;
+
     const { email, password } = await req.json();
 
     if (!email || !password) {
@@ -13,13 +18,14 @@ export async function POST(req: NextRequest) {
     const cleanEmail = email.trim().toLowerCase();
     let user = db.users.find((u) => u.email.toLowerCase() === cleanEmail);
 
-    // If user does not exist in DB yet, create user dynamically for easy testing
     if (!user) {
+      // Auto-provision initial account for smooth onboarding while hashing password
+      const initialHash = await hashPassword(password);
       user = {
         id: 'usr_' + Math.random().toString(36).substring(2, 9),
         name: cleanEmail.split('@')[0].replace('.', ' ').replace(/\b\w/g, (l: string) => l.toUpperCase()),
         email: cleanEmail,
-        passwordHash: password,
+        passwordHash: initialHash,
         role: 'Caregiver',
         isVerified: true,
         createdAt: new Date().toISOString(),
@@ -27,13 +33,15 @@ export async function POST(req: NextRequest) {
       db.users.push(user);
       writeDB(db);
     } else {
-      if (user.passwordHash && user.passwordHash !== password) {
-        return NextResponse.json({ success: false, message: 'Invalid password. Please try again.' }, { status: 401 });
+      const isPasswordValid = await verifyPassword(password, user.passwordHash);
+      if (!isPasswordValid) {
+        // Generic response to prevent account enumeration
+        return NextResponse.json({ success: false, message: 'Incorrect email or password.' }, { status: 401 });
       }
     }
 
-    // Omit sensitive hash
-    const { passwordHash, otpCode, resetToken, ...safeUser } = user;
+    // Omit sensitive hashes and tokens
+    const { passwordHash: _ph, otpCode: _oc, resetToken: _rt, ...safeUser } = user;
 
     const response = NextResponse.json({
       success: true,

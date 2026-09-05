@@ -5,8 +5,17 @@ const SMTP_HOST = process.env.SMTP_HOST || 'smtp.gmail.com';
 const SMTP_PORT = parseInt(process.env.SMTP_PORT || '587', 10);
 const SMTP_USER = process.env.SMTP_USER || '';
 const SMTP_PASS = process.env.SMTP_PASS || '';
-const SMTP_FROM = process.env.SMTP_FROM || 'CareBridge Health <no-reply@carebridge.org>';
-const ADMIN_EMAIL = process.env.ADMIN_EMAIL || 'support.carebridge@gmail.com';
+const SYSTEM_NOTIFICATION_ADDRESS =
+  process.env.CAREBRIDGE_NOTIFICATION_EMAIL ||
+  process.env.FEEDBACK_NOTIFICATION_EMAIL ||
+  'bridge.notifications@gmail.com';
+const SMTP_FROM = process.env.SMTP_FROM || `CareBridge System <${SYSTEM_NOTIFICATION_ADDRESS}>`;
+
+export interface MailDeliveryResult {
+  success: boolean;
+  error?: string;
+  simulated?: boolean;
+}
 
 function createTransporter() {
   if (SMTP_USER && SMTP_PASS) {
@@ -28,7 +37,8 @@ function logEmailDispatch(
   recipient: string,
   subject: string,
   body: string,
-  wasSent: boolean
+  wasSent: boolean,
+  failureReason?: string
 ) {
   try {
     const db = readDB();
@@ -38,28 +48,42 @@ function logEmailDispatch(
       recipient,
       subject,
       body,
-      status: wasSent ? 'SENT' : 'SIMULATED',
+      status: wasSent ? 'SENT' : failureReason ? 'FAILED' : 'SIMULATED',
       sentAt: new Date().toISOString(),
     };
     db.emailLogs.unshift(log);
+
+    // Also add to notificationLogs audit trail
+    if (db.notificationLogs) {
+      db.notificationLogs.unshift({
+        id: 'ntf_' + Math.random().toString(36).substring(2, 9),
+        type: type.toLowerCase() as any,
+        recipient,
+        channel: 'email',
+        status: wasSent ? 'SENT' : failureReason ? 'FAILED' : 'NOT_CONFIGURED',
+        failureReason,
+        sentAt: new Date().toISOString(),
+      });
+    }
+
     writeDB(db);
   } catch (err) {
     console.error('Error logging email dispatch:', err);
   }
 }
 
-export async function sendOtpEmail(recipientEmail: string, otpCode: string, name?: string): Promise<boolean> {
-  const subject = `Your CareBridge Verification Code: ${otpCode}`;
+export async function sendOtpEmail(recipientEmail: string, otpCode: string, name?: string): Promise<MailDeliveryResult> {
+  const subject = `Your CareBridge Login OTP: ${otpCode}`;
   const html = `
     <div style="font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; max-width: 600px; margin: 0 auto; padding: 24px; background-color: #f8fafc; border-radius: 16px; border: 1px solid #e2e8f0;">
       <div style="text-align: center; margin-bottom: 24px;">
-        <h2 style="color: #0f766e; margin: 0; font-size: 24px; font-weight: 800;">CareBridge AI Health</h2>
-        <p style="color: #64748b; font-size: 13px; margin-top: 4px;">Secure Patient & Caregiver Portal</p>
+        <h2 style="color: #0f766e; margin: 0; font-size: 24px; font-weight: 800;">CareBridge</h2>
+        <p style="color: #64748b; font-size: 13px; margin-top: 4px;">Secure Verification</p>
       </div>
       <div style="background-color: #ffffff; padding: 28px; border-radius: 12px; box-shadow: 0 4px 6px -1px rgba(0,0,0,0.05);">
         <h3 style="color: #0f172a; margin-top: 0;">Hello ${name || 'CareBridge User'},</h3>
         <p style="color: #334155; font-size: 14px; line-height: 1.6;">
-          Your 6-digit email login / verification OTP code for CareBridge is:
+          Your CareBridge verification code is:
         </p>
         <div style="text-align: center; margin: 24px 0;">
           <span style="display: inline-block; background-color: #ccfbf1; color: #0f766e; font-size: 32px; font-weight: 900; letter-spacing: 8px; padding: 12px 28px; border-radius: 10px; border: 2px dashed #0d9488;">
@@ -67,41 +91,48 @@ export async function sendOtpEmail(recipientEmail: string, otpCode: string, name
           </span>
         </div>
         <p style="color: #64748b; font-size: 13px; line-height: 1.5;">
-          This code is valid for <strong>10 minutes</strong>. If you did not request this login code, please ignore this message.
+          This code will expire in <strong>10 minutes</strong>.
+        </p>
+        <p style="color: #94a3b8; font-size: 12px; margin-top: 16px;">
+          If you did not request this code, you can ignore this email.
         </p>
       </div>
       <div style="text-align: center; margin-top: 20px; font-size: 12px; color: #94a3b8;">
-        © ${new Date().getFullYear()} CareBridge AI Health Portal. Encrypted & HIPAA-compliant design.
+        © ${new Date().getFullYear()} CareBridge. Automated System Notification.
       </div>
     </div>
   `;
 
   const transporter = createTransporter();
-  let sentReal = false;
-  if (transporter) {
-    try {
-      await transporter.sendMail({
-        from: SMTP_FROM,
-        to: recipientEmail,
-        subject,
-        html,
-      });
-      sentReal = true;
-    } catch (err) {
-      console.error('SMTP send failure, falling back to simulated log:', err);
-    }
+  if (!transporter) {
+    const errorMsg = 'SMTP credentials not configured (SMTP_USER/SMTP_PASS missing).';
+    logEmailDispatch('OTP', recipientEmail, subject, `OTP Code: ${otpCode}`, false, errorMsg);
+    return { success: false, simulated: true, error: errorMsg };
   }
-  logEmailDispatch('OTP', recipientEmail, subject, `OTP Code: ${otpCode}`, sentReal);
-  return true;
+
+  try {
+    await transporter.sendMail({ from: SMTP_FROM, to: recipientEmail, subject, html });
+    logEmailDispatch('OTP', recipientEmail, subject, `OTP Code: ${otpCode}`, true);
+    return { success: true };
+  } catch (err: any) {
+    const errorMsg = err?.message || 'Failed to dispatch email via SMTP transporter.';
+    console.error('SMTP send failure for OTP:', err);
+    logEmailDispatch('OTP', recipientEmail, subject, `OTP Code: ${otpCode}`, false, errorMsg);
+    return { success: false, error: errorMsg };
+  }
 }
 
-export async function sendPasswordResetEmail(recipientEmail: string, resetToken: string, name?: string): Promise<boolean> {
+export async function sendPasswordResetEmail(
+  recipientEmail: string,
+  resetToken: string,
+  name?: string
+): Promise<MailDeliveryResult> {
   const resetUrl = `${process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000'}/reset-password?token=${resetToken}&email=${encodeURIComponent(recipientEmail)}`;
   const subject = 'Reset Your CareBridge Password';
   const html = `
     <div style="font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; max-width: 600px; margin: 0 auto; padding: 24px; background-color: #f8fafc; border-radius: 16px; border: 1px solid #e2e8f0;">
       <div style="text-align: center; margin-bottom: 24px;">
-        <h2 style="color: #0f766e; margin: 0; font-size: 24px; font-weight: 800;">CareBridge AI Health</h2>
+        <h2 style="color: #0f766e; margin: 0; font-size: 24px; font-weight: 800;">CareBridge</h2>
       </div>
       <div style="background-color: #ffffff; padding: 28px; border-radius: 12px; box-shadow: 0 4px 6px -1px rgba(0,0,0,0.05);">
         <h3 style="color: #0f172a; margin-top: 0;">Password Reset Requested</h3>
@@ -122,17 +153,22 @@ export async function sendPasswordResetEmail(recipientEmail: string, resetToken:
   `;
 
   const transporter = createTransporter();
-  let sentReal = false;
-  if (transporter) {
-    try {
-      await transporter.sendMail({ from: SMTP_FROM, to: recipientEmail, subject, html });
-      sentReal = true;
-    } catch (err) {
-      console.error('SMTP send failure:', err);
-    }
+  if (!transporter) {
+    const errorMsg = 'SMTP credentials not configured (SMTP_USER/SMTP_PASS missing).';
+    logEmailDispatch('PASSWORD_RESET', recipientEmail, subject, `Reset Token: ${resetToken}`, false, errorMsg);
+    return { success: false, simulated: true, error: errorMsg };
   }
-  logEmailDispatch('PASSWORD_RESET', recipientEmail, subject, `Reset Token: ${resetToken}`, sentReal);
-  return true;
+
+  try {
+    await transporter.sendMail({ from: SMTP_FROM, to: recipientEmail, subject, html });
+    logEmailDispatch('PASSWORD_RESET', recipientEmail, subject, `Reset Token: ${resetToken}`, true);
+    return { success: true };
+  } catch (err: any) {
+    const errorMsg = err?.message || 'Failed to dispatch email via SMTP.';
+    console.error('SMTP send failure for password reset:', err);
+    logEmailDispatch('PASSWORD_RESET', recipientEmail, subject, `Reset Token: ${resetToken}`, false, errorMsg);
+    return { success: false, error: errorMsg };
+  }
 }
 
 export async function sendMedicineReminderEmail(
@@ -141,45 +177,51 @@ export async function sendMedicineReminderEmail(
   dosage: string,
   time: string,
   name?: string
-): Promise<boolean> {
-  const subject = `💊 Medicine Alert: Time to take ${medicineName} (${dosage})`;
+): Promise<MailDeliveryResult> {
+  const subject = `💊 CareBridge Medicine Reminder: ${medicineName} (${dosage})`;
   const html = `
     <div style="font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; max-width: 600px; margin: 0 auto; padding: 24px; background-color: #f8fafc; border-radius: 16px; border: 1px solid #e2e8f0;">
       <div style="background-color: #0f766e; color: #ffffff; padding: 20px; border-radius: 12px 12px 0 0; text-align: center;">
-        <h2 style="margin: 0; font-size: 20px;">CareBridge Scheduled Medicine Alert</h2>
+        <h2 style="margin: 0; font-size: 20px;">CareBridge Scheduled Medicine Reminder</h2>
       </div>
       <div style="background-color: #ffffff; padding: 28px; border-radius: 0 0 12px 12px; border: 1px solid #e2e8f0; border-top: none;">
         <p style="color: #334155; font-size: 15px;">Hello ${name || 'Caregiver / Patient'},</p>
+        <p style="color: #334155;">Your medicine scheduled for <strong>${time}</strong> has not been marked as taken yet.</p>
         <div style="background-color: #f0fdf4; border-left: 4px solid #16a34a; padding: 16px; margin: 20px 0; border-radius: 6px;">
           <h4 style="margin: 0 0 8px 0; color: #15803d; font-size: 16px;">${medicineName}</h4>
           <p style="margin: 0; color: #166534; font-size: 14px;">Dosage: <strong>${dosage}</strong></p>
           <p style="margin: 4px 0 0 0; color: #166534; font-size: 14px;">Scheduled Time: <strong>${time}</strong></p>
         </div>
-        <p style="color: #64748b; font-size: 13px;">Please verify that this medication was taken and marked in your CareBridge Dashboard.</p>
+        <p style="color: #64748b; font-size: 13px;">Please verify that this medication was taken and update your CareBridge schedule.</p>
       </div>
     </div>
   `;
 
   const transporter = createTransporter();
-  let sentReal = false;
-  if (transporter) {
-    try {
-      await transporter.sendMail({ from: SMTP_FROM, to: recipientEmail, subject, html });
-      sentReal = true;
-    } catch (err) {
-      console.error('SMTP send failure:', err);
-    }
+  if (!transporter) {
+    const errorMsg = 'SMTP credentials not configured.';
+    logEmailDispatch('MEDICINE_REMINDER', recipientEmail, subject, `Medicine: ${medicineName} @ ${time}`, false, errorMsg);
+    return { success: false, simulated: true, error: errorMsg };
   }
-  logEmailDispatch('MEDICINE_REMINDER', recipientEmail, subject, `Medicine: ${medicineName} @ ${time}`, sentReal);
-  return true;
+
+  try {
+    await transporter.sendMail({ from: SMTP_FROM, to: recipientEmail, subject, html });
+    logEmailDispatch('MEDICINE_REMINDER', recipientEmail, subject, `Medicine: ${medicineName} @ ${time}`, true);
+    return { success: true };
+  } catch (err: any) {
+    const errorMsg = err?.message || 'SMTP send failed.';
+    console.error('SMTP send failure for medicine reminder:', err);
+    logEmailDispatch('MEDICINE_REMINDER', recipientEmail, subject, `Medicine: ${medicineName} @ ${time}`, false, errorMsg);
+    return { success: false, error: errorMsg };
+  }
 }
 
 export async function sendDailySummaryEmail(
   recipientEmail: string,
   summaryContent: string,
   name?: string
-): Promise<boolean> {
-  const subject = `☀️ CareBridge Daily Health & Vitals Summary - ${new Date().toLocaleDateString()}`;
+): Promise<MailDeliveryResult> {
+  const subject = `☀️ CareBridge Daily Health Summary - ${new Date().toLocaleDateString()}`;
   const html = `
     <div style="font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; max-width: 650px; margin: 0 auto; padding: 24px; background-color: #f8fafc; border-radius: 16px; border: 1px solid #e2e8f0;">
       <div style="background-color: #0f172a; color: #ffffff; padding: 24px; border-radius: 12px; text-align: center; margin-bottom: 20px;">
@@ -193,75 +235,109 @@ export async function sendDailySummaryEmail(
   `;
 
   const transporter = createTransporter();
-  let sentReal = false;
-  if (transporter) {
-    try {
-      await transporter.sendMail({ from: SMTP_FROM, to: recipientEmail, subject, html });
-      sentReal = true;
-    } catch (err) {
-      console.error('SMTP send failure:', err);
-    }
+  if (!transporter) {
+    const errorMsg = 'SMTP credentials not configured.';
+    logEmailDispatch('DAILY_SUMMARY', recipientEmail, subject, `Daily Summary Dispatch`, false, errorMsg);
+    return { success: false, simulated: true, error: errorMsg };
   }
-  logEmailDispatch('DAILY_SUMMARY', recipientEmail, subject, `Daily Summary Dispatch`, sentReal);
-  return true;
+
+  try {
+    await transporter.sendMail({ from: SMTP_FROM, to: recipientEmail, subject, html });
+    logEmailDispatch('DAILY_SUMMARY', recipientEmail, subject, `Daily Summary Dispatch`, true);
+    return { success: true };
+  } catch (err: any) {
+    const errorMsg = err?.message || 'SMTP send failed.';
+    console.error('SMTP send failure for daily summary:', err);
+    logEmailDispatch('DAILY_SUMMARY', recipientEmail, subject, `Daily Summary Dispatch`, false, errorMsg);
+    return { success: false, error: errorMsg };
+  }
 }
 
 export async function sendFeedbackAlertToAdmin(feedback: {
+  id?: string;
   name: string;
   email: string;
   category: string;
   rating: number;
   message: string;
-}): Promise<boolean> {
+  notificationPreference?: string;
+  whatsappNumber?: string;
+  createdAt?: string;
+}): Promise<MailDeliveryResult> {
+  const targetEmail = SYSTEM_NOTIFICATION_ADDRESS;
   const subject = `📬 New CareBridge Feedback [${feedback.category}] - ${feedback.rating} Stars`;
+  const feedbackDate = feedback.createdAt ? new Date(feedback.createdAt).toLocaleString() : new Date().toLocaleString();
+  const feedbackId = feedback.id || 'fb_' + Date.now();
+
   const html = `
-    <div style="font-family: sans-serif; max-width: 600px; margin: 0 auto; padding: 20px; border: 1px solid #cbd5e1; border-radius: 12px;">
-      <h3 style="color: #0f766e; margin-top: 0;">New User Feedback Received</h3>
-      <p><strong>From:</strong> ${feedback.name} (&lt;${feedback.email}&gt;)</p>
-      <p><strong>Category:</strong> ${feedback.category}</p>
-      <p><strong>Rating:</strong> ${'★'.repeat(feedback.rating)}${'☆'.repeat(5 - feedback.rating)} (${feedback.rating}/5)</p>
-      <div style="background: #f1f5f9; padding: 16px; border-radius: 8px; margin-top: 12px; color: #1e293b;">
-        <p style="margin: 0; font-style: italic;">"${feedback.message}"</p>
+    <div style="font-family: sans-serif; max-width: 600px; margin: 0 auto; padding: 20px; border: 1px solid #cbd5e1; border-radius: 12px; background: #ffffff;">
+      <h3 style="color: #0f766e; margin-top: 0;">New CareBridge Platform Feedback</h3>
+      <table style="width: 100%; font-size: 14px; color: #334155; border-collapse: collapse;">
+        <tr><td style="padding: 4px 0; font-weight: bold;">Feedback ID:</td><td style="padding: 4px 0;">${feedbackId}</td></tr>
+        <tr><td style="padding: 4px 0; font-weight: bold;">User Name:</td><td style="padding: 4px 0;">${feedback.name}</td></tr>
+        <tr><td style="padding: 4px 0; font-weight: bold;">User Email:</td><td style="padding: 4px 0;">${feedback.email}</td></tr>
+        <tr><td style="padding: 4px 0; font-weight: bold;">Category:</td><td style="padding: 4px 0;">${feedback.category}</td></tr>
+        <tr><td style="padding: 4px 0; font-weight: bold;">Rating:</td><td style="padding: 4px 0;">${'★'.repeat(feedback.rating)}${'☆'.repeat(5 - feedback.rating)} (${feedback.rating}/5)</td></tr>
+        <tr><td style="padding: 4px 0; font-weight: bold;">Notification Pref:</td><td style="padding: 4px 0;">${feedback.notificationPreference || 'Not specified'}</td></tr>
+        ${feedback.whatsappNumber ? `<tr><td style="padding: 4px 0; font-weight: bold;">WhatsApp Number:</td><td style="padding: 4px 0;">${feedback.whatsappNumber}</td></tr>` : ''}
+        <tr><td style="padding: 4px 0; font-weight: bold;">Submitted Date/Time:</td><td style="padding: 4px 0;">${feedbackDate}</td></tr>
+      </table>
+      <div style="background: #f1f5f9; padding: 16px; border-radius: 8px; margin-top: 16px; color: #1e293b;">
+        <p style="margin: 0; font-weight: bold; font-size: 13px; color: #64748b;">Feedback Message:</p>
+        <p style="margin: 8px 0 0 0; line-height: 1.5;">"${feedback.message}"</p>
       </div>
     </div>
   `;
 
   const transporter = createTransporter();
-  let sentReal = false;
-  if (transporter) {
-    try {
-      await transporter.sendMail({ from: SMTP_FROM, to: ADMIN_EMAIL, subject, html });
-      sentReal = true;
-    } catch (err) {
-      console.error('SMTP send failure:', err);
-    }
+  if (!transporter) {
+    const errorMsg = 'SMTP credentials not configured (SMTP_USER/SMTP_PASS missing).';
+    logEmailDispatch('FEEDBACK_ALERT', targetEmail, subject, `Feedback ID: ${feedbackId}`, false, errorMsg);
+    return { success: false, simulated: true, error: errorMsg };
   }
-  logEmailDispatch('FEEDBACK_ALERT', ADMIN_EMAIL, subject, `Feedback from ${feedback.email}`, sentReal);
-  return true;
+
+  try {
+    await transporter.sendMail({ from: SMTP_FROM, to: targetEmail, subject, html });
+    logEmailDispatch('FEEDBACK_ALERT', targetEmail, subject, `Feedback ID: ${feedbackId}`, true);
+    return { success: true };
+  } catch (err: any) {
+    const errorMsg = err?.message || 'SMTP send failed.';
+    console.error('SMTP send failure for admin feedback alert:', err);
+    logEmailDispatch('FEEDBACK_ALERT', targetEmail, subject, `Feedback ID: ${feedbackId}`, false, errorMsg);
+    return { success: false, error: errorMsg };
+  }
 }
 
-export async function sendFeedbackUserConfirmation(recipientEmail: string, name: string): Promise<boolean> {
-  const subject = 'Thank you for your CareBridge feedback!';
+export async function sendFeedbackUserConfirmation(recipientEmail: string, name: string): Promise<MailDeliveryResult> {
+  const subject = 'Thank you for sharing your feedback with CareBridge';
   const html = `
     <div style="font-family: sans-serif; max-width: 600px; margin: 0 auto; padding: 24px; background: #f8fafc; border-radius: 12px; border: 1px solid #e2e8f0;">
-      <h3 style="color: #0f766e;">Thank you for reaching out to CareBridge, ${name}!</h3>
+      <h3 style="color: #0f766e; margin-top: 0;">Thank you for sharing your feedback with CareBridge!</h3>
       <p style="color: #334155; line-height: 1.6;">
-        We have received your feedback. Our medical technology and support team reviews every submission to continuously improve our health platform for patients and caregivers.
+        Hello <strong>${name}</strong>,<br/><br/>
+        Thank you for sharing your feedback with CareBridge. Your feedback has been received. Our team reviews every submission to continuously improve CareBridge for all caregivers and patients.
       </p>
-      <p style="color: #64748b; font-size: 13px;">If you have urgent questions, you can also reach us on WhatsApp at <strong>+91 7042363267</strong>.</p>
+      <p style="color: #64748b; font-size: 13px; border-top: 1px solid #e2e8f0; pt-12; margin-top: 20px;">
+        Need urgent assistance? Reach us on WhatsApp at <strong>+91 7042363267</strong> or <strong>+91 9953920052</strong>.
+      </p>
     </div>
   `;
 
   const transporter = createTransporter();
-  let sentReal = false;
-  if (transporter) {
-    try {
-      await transporter.sendMail({ from: SMTP_FROM, to: recipientEmail, subject, html });
-      sentReal = true;
-    } catch (err) {
-      console.error('SMTP send failure:', err);
-    }
+  if (!transporter) {
+    const errorMsg = 'SMTP credentials not configured.';
+    logEmailDispatch('FEEDBACK_CONFIRM', recipientEmail, subject, `User Confirmation for ${recipientEmail}`, false, errorMsg);
+    return { success: false, simulated: true, error: errorMsg };
   }
-  logEmailDispatch('FEEDBACK_CONFIRM', recipientEmail, subject, `Confirmation to ${recipientEmail}`, sentReal);
-  return true;
+
+  try {
+    await transporter.sendMail({ from: SMTP_FROM, to: recipientEmail, subject, html });
+    logEmailDispatch('FEEDBACK_CONFIRM', recipientEmail, subject, `User Confirmation for ${recipientEmail}`, true);
+    return { success: true };
+  } catch (err: any) {
+    const errorMsg = err?.message || 'SMTP send failed.';
+    console.error('SMTP send failure for user feedback confirmation:', err);
+    logEmailDispatch('FEEDBACK_CONFIRM', recipientEmail, subject, `User Confirmation for ${recipientEmail}`, false, errorMsg);
+    return { success: false, error: errorMsg };
+  }
 }

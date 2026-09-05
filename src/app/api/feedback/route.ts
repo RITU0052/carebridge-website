@@ -5,21 +5,33 @@ import { sendFeedbackAlertToAdmin, sendFeedbackUserConfirmation } from '@/lib/ma
 export async function POST(req: NextRequest) {
   try {
     const body = await req.json();
-    const { userId, name, email, rating = 5, category = 'General', message } = body;
+    let { userId, name, email, rating = 5, category = 'General', message, notificationPreference, whatsappNumber } = body;
 
-    if (!name || !email || !message) {
-      return NextResponse.json({ success: false, error: 'Name, email, and feedback message are required.' }, { status: 400 });
+    // Associate with authenticated session cookie if available
+    const sessionUserId = req.cookies.get('carebridge_session')?.value;
+    if (sessionUserId) {
+      userId = sessionUserId;
     }
 
+    if (!name || !email || !message) {
+      return NextResponse.json(
+        { success: false, error: 'Name, email, and feedback message are required.' },
+        { status: 400 }
+      );
+    }
+
+    const cleanEmail = email.trim().toLowerCase();
     const db = readDB();
     const newFeedback: FeedbackRecord = {
       id: 'fb_' + Math.random().toString(36).substring(2, 9),
       userId,
-      name,
-      email: email.trim().toLowerCase(),
+      name: name.trim(),
+      email: cleanEmail,
       rating: Number(rating) || 5,
       category: category || 'General',
       message: message.trim(),
+      notificationPreference: notificationPreference || 'email',
+      whatsappNumber: whatsappNumber ? whatsappNumber.trim() : undefined,
       status: 'New',
       createdAt: new Date().toISOString(),
     };
@@ -27,20 +39,29 @@ export async function POST(req: NextRequest) {
     db.feedback.unshift(newFeedback);
     writeDB(db);
 
-    // Send emails in background
-    sendFeedbackAlertToAdmin({
-      name,
-      email,
+    // Await email delivery to get real status
+    const adminEmailResult = await sendFeedbackAlertToAdmin({
+      id: newFeedback.id,
+      name: newFeedback.name,
+      email: newFeedback.email,
       category: newFeedback.category,
       rating: newFeedback.rating,
       message: newFeedback.message,
-    }).catch((err) => console.error('Admin feedback email error:', err));
+      notificationPreference: newFeedback.notificationPreference,
+      whatsappNumber: newFeedback.whatsappNumber,
+      createdAt: newFeedback.createdAt,
+    });
 
-    sendFeedbackUserConfirmation(newFeedback.email, name).catch((err) => console.error('User feedback confirm error:', err));
+    const userEmailResult = await sendFeedbackUserConfirmation(newFeedback.email, newFeedback.name);
 
     return NextResponse.json({
       success: true,
-      message: 'Thank you! Your feedback has been received and confirmed via email.',
+      feedbackSaved: true,
+      emailNotificationSent: adminEmailResult.success,
+      userConfirmationSent: userEmailResult.success,
+      emailMessage: adminEmailResult.success
+        ? 'Feedback saved & email notification delivered to bridge.notifications@gmail.com'
+        : adminEmailResult.error || 'Feedback saved successfully. (SMTP notification delivery unconfigured or failed)',
       feedback: newFeedback,
     });
   } catch (err) {
