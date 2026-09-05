@@ -1,35 +1,67 @@
 import nodemailer from 'nodemailer';
 import { readDB, writeDB, EmailLogRecord } from './db';
 
-const SMTP_HOST = process.env.SMTP_HOST || 'smtp.gmail.com';
-const SMTP_PORT = parseInt(process.env.SMTP_PORT || '587', 10);
-const SMTP_USER = process.env.SMTP_USER || '';
-const SMTP_PASS = process.env.SMTP_PASS || '';
-const SYSTEM_NOTIFICATION_ADDRESS =
-  process.env.CAREBRIDGE_NOTIFICATION_EMAIL ||
-  process.env.FEEDBACK_NOTIFICATION_EMAIL ||
-  'bridge.notifications@gmail.com';
-const SMTP_FROM = process.env.SMTP_FROM || `CareBridge System <${SYSTEM_NOTIFICATION_ADDRESS}>`;
-
 export interface MailDeliveryResult {
   success: boolean;
   error?: string;
   simulated?: boolean;
 }
 
+function getSmtpConfig() {
+  const host = process.env.SMTP_HOST || 'smtp.gmail.com';
+  const port = parseInt(process.env.SMTP_PORT || '587', 10);
+  const user = (process.env.SMTP_USER || '').trim();
+  const pass = (process.env.SMTP_PASS || '').trim();
+  const recipient = (
+    process.env.CAREBRIDGE_NOTIFICATION_EMAIL ||
+    process.env.FEEDBACK_NOTIFICATION_EMAIL ||
+    'CareBridge.notifications@gmail.com'
+  ).trim();
+  const from = (process.env.SMTP_FROM || `CareBridge System <${user || recipient}>`).trim();
+
+  return { host, port, user, pass, recipient, from };
+}
+
+export function validateEmailConfiguration(): {
+  isConfigured: boolean;
+  missingVars: string[];
+  recipient: string;
+  host: string;
+  port: number;
+} {
+  const config = getSmtpConfig();
+  const missingVars: string[] = [];
+  if (!config.user) missingVars.push('SMTP_USER');
+  if (!config.pass) missingVars.push('SMTP_PASS');
+
+  return {
+    isConfigured: missingVars.length === 0,
+    missingVars,
+    recipient: config.recipient,
+    host: config.host,
+    port: config.port,
+  };
+}
+
 function createTransporter() {
-  if (SMTP_USER && SMTP_PASS) {
-    return nodemailer.createTransport({
-      host: SMTP_HOST,
-      port: SMTP_PORT,
-      secure: SMTP_PORT === 465,
+  const config = getSmtpConfig();
+  if (config.user && config.pass) {
+    const transporter = nodemailer.createTransport({
+      host: config.host,
+      port: config.port,
+      secure: config.port === 465,
+      requireTLS: config.port === 587,
       auth: {
-        user: SMTP_USER,
-        pass: SMTP_PASS,
+        user: config.user,
+        pass: config.pass,
       },
+      connectionTimeout: 10000,
+      greetingTimeout: 5000,
+      socketTimeout: 10000,
     });
+    return { transporter, config };
   }
-  return null;
+  return { transporter: null, config };
 }
 
 function logEmailDispatch(
@@ -53,7 +85,6 @@ function logEmailDispatch(
     };
     db.emailLogs.unshift(log);
 
-    // Also add to notificationLogs audit trail
     if (db.notificationLogs) {
       db.notificationLogs.unshift({
         id: 'ntf_' + Math.random().toString(36).substring(2, 9),
@@ -73,7 +104,11 @@ function logEmailDispatch(
 }
 
 export async function sendOtpEmail(recipientEmail: string, otpCode: string, name?: string): Promise<MailDeliveryResult> {
-  const subject = `Your CareBridge Login OTP: ${otpCode}`;
+  console.log('[OTP] Sending email');
+  const { transporter, config } = createTransporter();
+
+  const subject = 'Your CareBridge Verification Code';
+  const text = `Hello ${name || 'CareBridge User'},\n\nYour CareBridge verification code is: ${otpCode}\n\nThis code will expire in 10 minutes.\nIf you did not request this code, you can ignore this email.`;
   const html = `
     <div style="font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; max-width: 600px; margin: 0 auto; padding: 24px; background-color: #f8fafc; border-radius: 16px; border: 1px solid #e2e8f0;">
       <div style="text-align: center; margin-bottom: 24px;">
@@ -103,21 +138,22 @@ export async function sendOtpEmail(recipientEmail: string, otpCode: string, name
     </div>
   `;
 
-  const transporter = createTransporter();
   if (!transporter) {
-    const errorMsg = 'SMTP credentials not configured (SMTP_USER/SMTP_PASS missing).';
-    logEmailDispatch('OTP', recipientEmail, subject, `OTP Code: ${otpCode}`, false, errorMsg);
+    const errorMsg = 'SMTP credentials not configured (SMTP_USER/SMTP_PASS missing in Production).';
+    console.warn(`[OTP] Email send failed: ${errorMsg}`);
+    logEmailDispatch('OTP', recipientEmail, subject, 'OTP Verification Code', false, errorMsg);
     return { success: false, simulated: true, error: errorMsg };
   }
 
   try {
-    await transporter.sendMail({ from: SMTP_FROM, to: recipientEmail, subject, html });
-    logEmailDispatch('OTP', recipientEmail, subject, `OTP Code: ${otpCode}`, true);
+    await transporter.sendMail({ from: config.from, to: recipientEmail, subject, text, html });
+    console.log('[OTP] Email sent successfully');
+    logEmailDispatch('OTP', recipientEmail, subject, 'OTP Verification Code', true);
     return { success: true };
   } catch (err: any) {
     const errorMsg = err?.message || 'Failed to dispatch email via SMTP transporter.';
-    console.error('SMTP send failure for OTP:', err);
-    logEmailDispatch('OTP', recipientEmail, subject, `OTP Code: ${otpCode}`, false, errorMsg);
+    console.error('[OTP] Email send failed:', errorMsg);
+    logEmailDispatch('OTP', recipientEmail, subject, 'OTP Verification Code', false, errorMsg);
     return { success: false, error: errorMsg };
   }
 }
@@ -127,6 +163,9 @@ export async function sendPasswordResetEmail(
   resetToken: string,
   name?: string
 ): Promise<MailDeliveryResult> {
+  console.log(`[Password Reset Email] Starting dispatch to: ${recipientEmail}`);
+  const { transporter, config } = createTransporter();
+
   const resetUrl = `${process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000'}/reset-password?token=${resetToken}&email=${encodeURIComponent(recipientEmail)}`;
   const subject = 'Reset Your CareBridge Password';
   const html = `
@@ -152,20 +191,21 @@ export async function sendPasswordResetEmail(
     </div>
   `;
 
-  const transporter = createTransporter();
   if (!transporter) {
     const errorMsg = 'SMTP credentials not configured (SMTP_USER/SMTP_PASS missing).';
+    console.warn(`[Password Reset Email] Failed: ${errorMsg}`);
     logEmailDispatch('PASSWORD_RESET', recipientEmail, subject, `Reset Token: ${resetToken}`, false, errorMsg);
     return { success: false, simulated: true, error: errorMsg };
   }
 
   try {
-    await transporter.sendMail({ from: SMTP_FROM, to: recipientEmail, subject, html });
+    await transporter.sendMail({ from: config.from, to: recipientEmail, subject, html });
+    console.log(`[Password Reset Email] Sent successfully to ${recipientEmail}`);
     logEmailDispatch('PASSWORD_RESET', recipientEmail, subject, `Reset Token: ${resetToken}`, true);
     return { success: true };
   } catch (err: any) {
     const errorMsg = err?.message || 'Failed to dispatch email via SMTP.';
-    console.error('SMTP send failure for password reset:', err);
+    console.error('[Password Reset Email] Send failure:', errorMsg);
     logEmailDispatch('PASSWORD_RESET', recipientEmail, subject, `Reset Token: ${resetToken}`, false, errorMsg);
     return { success: false, error: errorMsg };
   }
@@ -178,6 +218,9 @@ export async function sendMedicineReminderEmail(
   time: string,
   name?: string
 ): Promise<MailDeliveryResult> {
+  console.log(`[Medicine Reminder Email] Starting dispatch to: ${recipientEmail}`);
+  const { transporter, config } = createTransporter();
+
   const subject = `💊 CareBridge Medicine Reminder: ${medicineName} (${dosage})`;
   const html = `
     <div style="font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; max-width: 600px; margin: 0 auto; padding: 24px; background-color: #f8fafc; border-radius: 16px; border: 1px solid #e2e8f0;">
@@ -197,20 +240,21 @@ export async function sendMedicineReminderEmail(
     </div>
   `;
 
-  const transporter = createTransporter();
   if (!transporter) {
     const errorMsg = 'SMTP credentials not configured.';
+    console.warn(`[Medicine Reminder Email] Failed: ${errorMsg}`);
     logEmailDispatch('MEDICINE_REMINDER', recipientEmail, subject, `Medicine: ${medicineName} @ ${time}`, false, errorMsg);
     return { success: false, simulated: true, error: errorMsg };
   }
 
   try {
-    await transporter.sendMail({ from: SMTP_FROM, to: recipientEmail, subject, html });
+    await transporter.sendMail({ from: config.from, to: recipientEmail, subject, html });
+    console.log(`[Medicine Reminder Email] Sent successfully to ${recipientEmail}`);
     logEmailDispatch('MEDICINE_REMINDER', recipientEmail, subject, `Medicine: ${medicineName} @ ${time}`, true);
     return { success: true };
   } catch (err: any) {
     const errorMsg = err?.message || 'SMTP send failed.';
-    console.error('SMTP send failure for medicine reminder:', err);
+    console.error('[Medicine Reminder Email] Send failure:', errorMsg);
     logEmailDispatch('MEDICINE_REMINDER', recipientEmail, subject, `Medicine: ${medicineName} @ ${time}`, false, errorMsg);
     return { success: false, error: errorMsg };
   }
@@ -221,6 +265,9 @@ export async function sendDailySummaryEmail(
   summaryContent: string,
   name?: string
 ): Promise<MailDeliveryResult> {
+  console.log(`[Daily Summary Email] Starting dispatch to: ${recipientEmail}`);
+  const { transporter, config } = createTransporter();
+
   const subject = `☀️ CareBridge Daily Health Summary - ${new Date().toLocaleDateString()}`;
   const html = `
     <div style="font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; max-width: 650px; margin: 0 auto; padding: 24px; background-color: #f8fafc; border-radius: 16px; border: 1px solid #e2e8f0;">
@@ -234,20 +281,21 @@ export async function sendDailySummaryEmail(
     </div>
   `;
 
-  const transporter = createTransporter();
   if (!transporter) {
     const errorMsg = 'SMTP credentials not configured.';
+    console.warn(`[Daily Summary Email] Failed: ${errorMsg}`);
     logEmailDispatch('DAILY_SUMMARY', recipientEmail, subject, `Daily Summary Dispatch`, false, errorMsg);
     return { success: false, simulated: true, error: errorMsg };
   }
 
   try {
-    await transporter.sendMail({ from: SMTP_FROM, to: recipientEmail, subject, html });
+    await transporter.sendMail({ from: config.from, to: recipientEmail, subject, html });
+    console.log(`[Daily Summary Email] Sent successfully to ${recipientEmail}`);
     logEmailDispatch('DAILY_SUMMARY', recipientEmail, subject, `Daily Summary Dispatch`, true);
     return { success: true };
   } catch (err: any) {
     const errorMsg = err?.message || 'SMTP send failed.';
-    console.error('SMTP send failure for daily summary:', err);
+    console.error('[Daily Summary Email] Send failure:', errorMsg);
     logEmailDispatch('DAILY_SUMMARY', recipientEmail, subject, `Daily Summary Dispatch`, false, errorMsg);
     return { success: false, error: errorMsg };
   }
@@ -264,7 +312,13 @@ export async function sendFeedbackAlertToAdmin(feedback: {
   whatsappNumber?: string;
   createdAt?: string;
 }): Promise<MailDeliveryResult> {
-  const targetEmail = SYSTEM_NOTIFICATION_ADDRESS;
+  console.log('[Feedback Email] Starting admin feedback notification dispatch');
+  const { transporter, config } = createTransporter();
+  const targetEmail = config.recipient;
+
+  console.log(`[Feedback Email] Configured recipient: ${targetEmail}`);
+  console.log(`[Feedback Email] Mail transport configured: ${Boolean(transporter)}`);
+
   const subject = `📬 New CareBridge Feedback [${feedback.category}] - ${feedback.rating} Stars`;
   const feedbackDate = feedback.createdAt ? new Date(feedback.createdAt).toLocaleString() : new Date().toLocaleString();
   const feedbackId = feedback.id || 'fb_' + Date.now();
@@ -289,26 +343,31 @@ export async function sendFeedbackAlertToAdmin(feedback: {
     </div>
   `;
 
-  const transporter = createTransporter();
   if (!transporter) {
-    const errorMsg = 'SMTP credentials not configured (SMTP_USER/SMTP_PASS missing).';
+    const errorMsg = 'SMTP credentials not configured in environment variables (SMTP_USER and/or SMTP_PASS missing).';
+    console.warn(`[Feedback Email] Failed: ${errorMsg}`);
     logEmailDispatch('FEEDBACK_ALERT', targetEmail, subject, `Feedback ID: ${feedbackId}`, false, errorMsg);
     return { success: false, simulated: true, error: errorMsg };
   }
 
   try {
-    await transporter.sendMail({ from: SMTP_FROM, to: targetEmail, subject, html });
+    console.log(`[Feedback Email] Sending email via SMTP (${config.host}:${config.port}) to ${targetEmail}...`);
+    await transporter.sendMail({ from: config.from, to: targetEmail, subject, html });
+    console.log('[Feedback Email] Sent successfully');
     logEmailDispatch('FEEDBACK_ALERT', targetEmail, subject, `Feedback ID: ${feedbackId}`, true);
     return { success: true };
   } catch (err: any) {
     const errorMsg = err?.message || 'SMTP send failed.';
-    console.error('SMTP send failure for admin feedback alert:', err);
+    console.error('[Feedback Email] Failed:', errorMsg);
     logEmailDispatch('FEEDBACK_ALERT', targetEmail, subject, `Feedback ID: ${feedbackId}`, false, errorMsg);
     return { success: false, error: errorMsg };
   }
 }
 
 export async function sendFeedbackUserConfirmation(recipientEmail: string, name: string): Promise<MailDeliveryResult> {
+  console.log(`[Feedback Confirmation] Starting dispatch to user: ${recipientEmail}`);
+  const { transporter, config } = createTransporter();
+
   const subject = 'Thank you for sharing your feedback with CareBridge';
   const html = `
     <div style="font-family: sans-serif; max-width: 600px; margin: 0 auto; padding: 24px; background: #f8fafc; border-radius: 12px; border: 1px solid #e2e8f0;">
@@ -323,20 +382,21 @@ export async function sendFeedbackUserConfirmation(recipientEmail: string, name:
     </div>
   `;
 
-  const transporter = createTransporter();
   if (!transporter) {
     const errorMsg = 'SMTP credentials not configured.';
+    console.warn(`[Feedback Confirmation] Failed: ${errorMsg}`);
     logEmailDispatch('FEEDBACK_CONFIRM', recipientEmail, subject, `User Confirmation for ${recipientEmail}`, false, errorMsg);
     return { success: false, simulated: true, error: errorMsg };
   }
 
   try {
-    await transporter.sendMail({ from: SMTP_FROM, to: recipientEmail, subject, html });
+    await transporter.sendMail({ from: config.from, to: recipientEmail, subject, html });
+    console.log(`[Feedback Confirmation] Sent successfully to ${recipientEmail}`);
     logEmailDispatch('FEEDBACK_CONFIRM', recipientEmail, subject, `User Confirmation for ${recipientEmail}`, true);
     return { success: true };
   } catch (err: any) {
     const errorMsg = err?.message || 'SMTP send failed.';
-    console.error('SMTP send failure for user feedback confirmation:', err);
+    console.error('[Feedback Confirmation] Failed:', errorMsg);
     logEmailDispatch('FEEDBACK_CONFIRM', recipientEmail, subject, `User Confirmation for ${recipientEmail}`, false, errorMsg);
     return { success: false, error: errorMsg };
   }

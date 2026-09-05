@@ -180,9 +180,6 @@ export function normalizePhoneNumber(phone: string): string {
   return `+${digits}`;
 }
 
-const DATA_DIR = path.join(process.cwd(), 'data');
-const DB_FILE = path.join(DATA_DIR, 'carebridge_db.json');
-
 const INITIAL_DB: DatabaseSchema = {
   users: [
     {
@@ -331,51 +328,113 @@ const INITIAL_DB: DatabaseSchema = {
   overdueReminderLogs: [],
 };
 
-function ensureDBFileExists(): void {
+const PRIMARY_DATA_DIR = path.join(process.cwd(), 'data');
+const PRIMARY_DB_FILE = path.join(PRIMARY_DATA_DIR, 'carebridge_db.json');
+const TMP_DB_FILE = path.join('/tmp', 'carebridge_db.json');
+const IS_SERVERLESS = Boolean(process.env.VERCEL || process.env.NEXT_RUNTIME || process.env.AWS_LAMBDA_FUNCTION_NAME);
+
+let cachedDbMemory: DatabaseSchema | null = null;
+
+function getDbFilePath(): string {
+  if (IS_SERVERLESS) {
+    return TMP_DB_FILE;
+  }
+  return PRIMARY_DB_FILE;
+}
+
+function ensureDBFileExists(): string {
+  const targetFile = getDbFilePath();
   try {
-    if (!fs.existsSync(DATA_DIR)) {
-      fs.mkdirSync(DATA_DIR, { recursive: true });
+    if (fs.existsSync(targetFile)) {
+      return targetFile;
     }
-    if (!fs.existsSync(DB_FILE)) {
-      fs.writeFileSync(DB_FILE, JSON.stringify(INITIAL_DB, null, 2), 'utf-8');
+
+    let seedData: DatabaseSchema = INITIAL_DB;
+    if (fs.existsSync(PRIMARY_DB_FILE)) {
+      try {
+        const raw = fs.readFileSync(PRIMARY_DB_FILE, 'utf-8');
+        seedData = JSON.parse(raw);
+      } catch {
+        seedData = INITIAL_DB;
+      }
     }
+
+    const dir = path.dirname(targetFile);
+    if (!fs.existsSync(dir)) {
+      fs.mkdirSync(dir, { recursive: true });
+    }
+    fs.writeFileSync(targetFile, JSON.stringify(seedData, null, 2), 'utf-8');
+    return targetFile;
   } catch (err) {
-    console.error('Error initializing database file:', err);
+    console.warn(`[DB] Warning initializing DB file at ${targetFile}:`, err);
+    if (targetFile !== TMP_DB_FILE) {
+      try {
+        if (!fs.existsSync(TMP_DB_FILE)) {
+          fs.writeFileSync(TMP_DB_FILE, JSON.stringify(INITIAL_DB, null, 2), 'utf-8');
+        }
+        return TMP_DB_FILE;
+      } catch (fallbackErr) {
+        console.error('[DB] Error initializing fallback /tmp DB file:', fallbackErr);
+      }
+    }
+    return targetFile;
   }
 }
 
 export function readDB(): DatabaseSchema {
-  ensureDBFileExists();
-  try {
-    const fileContent = fs.readFileSync(DB_FILE, 'utf-8');
-    const parsed = JSON.parse(fileContent) as Partial<DatabaseSchema>;
-    return {
-      users: parsed.users || [],
-      medicines: parsed.medicines || [],
-      vitals: parsed.vitals || [],
-      reports: parsed.reports || [],
-      emergencyContacts: parsed.emergencyContacts || [],
-      feedback: parsed.feedback || [],
-      emailLogs: parsed.emailLogs || [],
-      caregiverRelationships: parsed.caregiverRelationships || [],
-      notificationPreferences: parsed.notificationPreferences || [],
-      notificationLogs: parsed.notificationLogs || [],
-      adherenceLogs: parsed.adherenceLogs || [],
-      overdueReminderLogs: parsed.overdueReminderLogs || [],
-    };
-  } catch (err) {
-    console.error('Error reading database file, returning initial database:', err);
-    return INITIAL_DB;
+  if (cachedDbMemory) {
+    return cachedDbMemory;
   }
+
+  const dbFile = ensureDBFileExists();
+  try {
+    let fileContent = '';
+    if (fs.existsSync(dbFile)) {
+      fileContent = fs.readFileSync(dbFile, 'utf-8');
+    } else if (fs.existsSync(PRIMARY_DB_FILE)) {
+      fileContent = fs.readFileSync(PRIMARY_DB_FILE, 'utf-8');
+    }
+
+    if (fileContent) {
+      const parsed = JSON.parse(fileContent) as Partial<DatabaseSchema>;
+      cachedDbMemory = {
+        users: parsed.users || [],
+        medicines: parsed.medicines || [],
+        vitals: parsed.vitals || [],
+        reports: parsed.reports || [],
+        emergencyContacts: parsed.emergencyContacts || [],
+        feedback: parsed.feedback || [],
+        emailLogs: parsed.emailLogs || [],
+        caregiverRelationships: parsed.caregiverRelationships || [],
+        notificationPreferences: parsed.notificationPreferences || [],
+        notificationLogs: parsed.notificationLogs || [],
+        adherenceLogs: parsed.adherenceLogs || [],
+        overdueReminderLogs: parsed.overdueReminderLogs || [],
+      };
+      return cachedDbMemory;
+    }
+  } catch (err) {
+    console.error('[DB] Error reading database file, returning initial database:', err);
+  }
+
+  cachedDbMemory = { ...INITIAL_DB };
+  return cachedDbMemory;
 }
 
 export function writeDB(dbData: DatabaseSchema): boolean {
-  ensureDBFileExists();
+  cachedDbMemory = dbData;
+  const dbFile = ensureDBFileExists();
   try {
-    fs.writeFileSync(DB_FILE, JSON.stringify(dbData, null, 2), 'utf-8');
+    fs.writeFileSync(dbFile, JSON.stringify(dbData, null, 2), 'utf-8');
     return true;
   } catch (err) {
-    console.error('Error writing database file:', err);
-    return false;
+    console.warn(`[DB] Could not write to ${dbFile}, trying /tmp fallback:`, err);
+    try {
+      fs.writeFileSync(TMP_DB_FILE, JSON.stringify(dbData, null, 2), 'utf-8');
+      return true;
+    } catch (tmpErr) {
+      console.error('[DB] Error writing DB to /tmp:', tmpErr);
+      return false;
+    }
   }
 }

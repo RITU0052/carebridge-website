@@ -60,7 +60,7 @@ export async function POST(req: NextRequest) {
       emailNotificationSent: adminEmailResult.success,
       userConfirmationSent: userEmailResult.success,
       emailMessage: adminEmailResult.success
-        ? 'Feedback saved & email notification delivered to bridge.notifications@gmail.com'
+        ? 'Feedback saved & email notification delivered to CareBridge.notifications@gmail.com'
         : adminEmailResult.error || 'Feedback saved successfully. (SMTP notification delivery unconfigured or failed)',
       feedback: newFeedback,
     });

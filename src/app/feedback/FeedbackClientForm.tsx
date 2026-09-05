@@ -2,7 +2,7 @@
 
 import React, { useState } from 'react';
 import Link from 'next/link';
-import { Star, Send, CheckCircle2, MessageSquare, ShieldCheck, Bell, Smartphone, Mail, HelpCircle } from 'lucide-react';
+import { Star, Send, CheckCircle2, MessageSquare, ShieldCheck, Bell, Smartphone, Mail, HelpCircle, AlertTriangle } from 'lucide-react';
 import { Breadcrumbs } from '@/components/ui/Breadcrumbs';
 
 export function FeedbackClientForm() {
@@ -15,11 +15,13 @@ export function FeedbackClientForm() {
   const [message, setMessage] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+  const [emailWarning, setEmailWarning] = useState('');
   const [submitted, setSubmitted] = useState(false);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError('');
+    setEmailWarning('');
 
     if (!name || !email || !message) {
       setError('Please fill in your name, email, and feedback message.');
@@ -46,6 +48,11 @@ export function FeedbackClientForm() {
 
       if (data.success) {
         setSubmitted(true);
+        if (data.emailNotificationSent === false) {
+          setEmailWarning(data.emailMessage || 'Your feedback was saved, but the admin notification email could not be sent. Please check server SMTP configuration.');
+        } else {
+          setEmailWarning('');
+        }
       } else {
         setError(data.error || 'Failed to submit feedback. Please try again.');
       }
@@ -79,11 +86,21 @@ export function FeedbackClientForm() {
               <div className="w-20 h-20 bg-emerald-100 text-emerald-600 rounded-full flex items-center justify-center mx-auto shadow-inner">
                 <CheckCircle2 className="w-12 h-12" />
               </div>
-              <div className="space-y-2">
+              <div className="space-y-3">
                 <h2 className="text-2xl font-black text-slate-900">Thank You for Your Feedback!</h2>
                 <p className="text-sm text-slate-600 max-w-md mx-auto leading-relaxed">
-                  Your response has been saved and forwarded to our notifications team (<strong>carebridge.notifications@gmail.com</strong>). A confirmation email has been dispatched to <strong>{email}</strong>.
+                  Your feedback has been saved successfully in the CareBridge platform.
                 </p>
+
+                {emailWarning && (
+                  <div className="p-4 rounded-2xl bg-amber-50 border border-amber-200 text-amber-900 text-xs text-left max-w-md mx-auto flex items-start gap-2.5">
+                    <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
+                    <div>
+                      <p className="font-bold text-amber-950">Email Delivery Notice:</p>
+                      <p className="mt-0.5 leading-relaxed">{emailWarning}</p>
+                    </div>
+                  </div>
+                )}
               </div>
 
               <div className="pt-4 flex justify-center gap-4 flex-wrap">
@@ -91,6 +108,7 @@ export function FeedbackClientForm() {
                   onClick={() => {
                     setSubmitted(false);
                     setMessage('');
+                    setEmailWarning('');
                   }}
                   className="px-5 py-3 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-800 font-bold text-sm transition-colors"
                 >
