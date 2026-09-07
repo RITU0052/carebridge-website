@@ -401,3 +401,251 @@ export async function sendFeedbackUserConfirmation(recipientEmail: string, name:
     return { success: false, error: errorMsg };
   }
 }
+
+/**
+ * 1. Send Doctor Email Verification Link
+ */
+export async function sendDoctorVerificationEmail(params: {
+  toEmail: string;
+  doctorName: string;
+  verificationToken?: string;
+  rawToken?: string;
+}): Promise<MailDeliveryResult> {
+  const { toEmail, doctorName } = params;
+  const token = params.verificationToken || params.rawToken || '';
+  const baseUrl = (process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000').replace(/\/$/, '');
+  const verifyUrl = `${baseUrl}/doctor/verify-email?token=${encodeURIComponent(token)}`;
+
+  const subject = 'Verify your CareBridge doctor account';
+  const html = `
+    <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 28px; background: #0f172a; border-radius: 16px; color: #f8fafc; border: 1px solid #1e293b;">
+      <div style="text-align: center; margin-bottom: 24px;">
+        <h2 style="color: #14b8a6; margin: 0; font-size: 24px;">CareBridge Healthcare</h2>
+        <p style="color: #94a3b8; font-size: 13px; margin-top: 4px;">Doctor Verification System</p>
+      </div>
+
+      <h3 style="color: #ffffff; font-size: 18px;">Hello Dr. ${doctorName},</h3>
+
+      <p style="color: #cbd5e1; line-height: 1.6; font-size: 14px;">
+        Thank you for registering your medical practice with CareBridge. Please click the button below to verify your email address and submit your account for administrator review.
+      </p>
+
+      <div style="text-align: center; margin: 32px 0;">
+        <a href="${verifyUrl}" style="background-color: #0d9488; color: #ffffff; padding: 14px 28px; text-decoration: none; border-radius: 12px; font-weight: bold; font-size: 14px; display: inline-block;">
+          Verify My Email
+        </a>
+      </div>
+
+      <p style="color: #94a3b8; font-size: 12px; line-height: 1.5;">
+        Or copy and paste this link into your browser:<br/>
+        <a href="${verifyUrl}" style="color: #2dd4bf; word-break: break-all;">${verifyUrl}</a>
+      </p>
+
+      <div style="margin-top: 28px; padding-top: 20px; border-top: 1px solid #1e293b; color: #64748b; font-size: 12px; text-align: center;">
+        <p>This single-use verification link will expire in 30 minutes.</p>
+        <p>© CareBridge Healthcare Platform. If you did not create this account, please ignore this message.</p>
+      </div>
+    </div>
+  `;
+
+  const { transporter, config } = createTransporter();
+
+  if (process.env.EMAIL_MODE === 'development' || !transporter) {
+    console.log(`[Doctor Verify Email SIMULATED] Link for Dr. ${doctorName}: ${verifyUrl}`);
+    logEmailDispatch('OTP', toEmail, subject, `Simulated Doctor Verify Link: ${verifyUrl}`, true);
+    return { success: true, simulated: true };
+  }
+
+  try {
+    await transporter.sendMail({ from: config.from, to: toEmail, subject, html });
+    logEmailDispatch('OTP', toEmail, subject, `Verification sent to Dr. ${doctorName}`, true);
+    return { success: true };
+  } catch (err: any) {
+    const errorMsg = err?.message || 'Failed to send doctor verification email.';
+    console.error('[Doctor Verify Email Error]:', errorMsg);
+    logEmailDispatch('OTP', toEmail, subject, `Verification failed for Dr. ${doctorName}`, false, errorMsg);
+    return { success: false, error: errorMsg };
+  }
+}
+
+/**
+ * 2. Send Admin Notification for New Verified Doctor Request
+ */
+export async function sendAdminNewDoctorNotificationEmail(params: {
+  doctorName: string;
+  doctorEmail: string;
+  specialization: string;
+  registeredAt: string;
+  licenseNumber?: string;
+  doctorId?: string;
+}): Promise<MailDeliveryResult> {
+  const { doctorName, doctorEmail, specialization, registeredAt, licenseNumber, doctorId } = params;
+  const adminEmail = (process.env.ADMIN_EMAIL || process.env.CAREBRIDGE_NOTIFICATION_EMAIL || 'admin@carebridge.com').trim();
+  const baseUrl = (process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000').replace(/\/$/, '');
+  const adminUrl = doctorId ? `${baseUrl}/admin/doctors/${doctorId}` : `${baseUrl}/admin/doctors`;
+
+  const subject = 'New Doctor Verification Request — CareBridge';
+  const html = `
+    <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 28px; background: #0f172a; border-radius: 16px; color: #f8fafc; border: 1px solid #1e293b;">
+      <h3 style="color: #38bdf8; margin-top: 0;">New Doctor Verification Request</h3>
+      <p style="color: #cbd5e1; font-size: 14px;">
+        A new doctor has completed email verification and is waiting for administrator review.
+      </p>
+
+      <table style="width: 100%; border-collapse: collapse; margin: 20px 0; font-size: 13px; color: #cbd5e1;">
+        <tr style="border-bottom: 1px solid #1e293b;">
+          <td style="padding: 8px 0; font-weight: bold; color: #94a3b8;">Doctor Name:</td>
+          <td style="padding: 8px 0; font-weight: bold; color: #ffffff;">Dr. ${doctorName}</td>
+        </tr>
+        <tr style="border-bottom: 1px solid #1e293b;">
+          <td style="padding: 8px 0; font-weight: bold; color: #94a3b8;">Email Address:</td>
+          <td style="padding: 8px 0; color: #2dd4bf;">${doctorEmail}</td>
+        </tr>
+        <tr style="border-bottom: 1px solid #1e293b;">
+          <td style="padding: 8px 0; font-weight: bold; color: #94a3b8;">Specialization:</td>
+          <td style="padding: 8px 0; color: #ffffff;">${specialization}</td>
+        </tr>
+        <tr>
+          <td style="padding: 8px 0; font-weight: bold; color: #94a3b8;">Registered At:</td>
+          <td style="padding: 8px 0; color: #94a3b8;">${new Date(registeredAt).toLocaleString()}</td>
+        </tr>
+      </table>
+
+      <div style="text-align: center; margin-top: 24px;">
+        <a href="${adminUrl}" style="background-color: #0284c7; color: #ffffff; padding: 12px 24px; text-decoration: none; border-radius: 10px; font-weight: bold; font-size: 13px; display: inline-block;">
+          Review Doctor in Admin Panel
+        </a>
+      </div>
+    </div>
+  `;
+
+  const { transporter, config } = createTransporter();
+
+  if (process.env.EMAIL_MODE === 'development' || !transporter) {
+    console.log(`[Admin Doctor Request SIMULATED] Alert for Dr. ${doctorName} sent to ${adminEmail}`);
+    logEmailDispatch('FEEDBACK_ALERT', adminEmail, subject, `New doctor verification: Dr. ${doctorName}`, true);
+    return { success: true, simulated: true };
+  }
+
+  try {
+    await transporter.sendMail({ from: config.from, to: adminEmail, subject, html });
+    logEmailDispatch('FEEDBACK_ALERT', adminEmail, subject, `New doctor verification: Dr. ${doctorName}`, true);
+    return { success: true };
+  } catch (err: any) {
+    const errorMsg = err?.message || 'Failed to send admin doctor notification.';
+    console.error('[Admin Doctor Email Error]:', errorMsg);
+    logEmailDispatch('FEEDBACK_ALERT', adminEmail, subject, `New doctor verification: Dr. ${doctorName}`, false, errorMsg);
+    return { success: false, error: errorMsg };
+  }
+}
+
+/**
+ * 3. Send Doctor Account Approval Email
+ */
+export async function sendDoctorApprovalEmail(params: {
+  toEmail: string;
+  doctorName: string;
+}): Promise<MailDeliveryResult> {
+  const { toEmail, doctorName } = params;
+  const baseUrl = (process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000').replace(/\/$/, '');
+  const dashboardUrl = `${baseUrl}/doctor/dashboard`;
+
+  const subject = 'Your CareBridge Doctor Account Has Been Approved';
+  const html = `
+    <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 28px; background: #0f172a; border-radius: 16px; color: #f8fafc; border: 1px solid #1e293b;">
+      <div style="text-align: center; margin-bottom: 24px;">
+        <h2 style="color: #10b981; margin: 0; font-size: 24px;">Account Approved!</h2>
+        <p style="color: #94a3b8; font-size: 13px; margin-top: 4px;">CareBridge Medical Platform</p>
+      </div>
+
+      <h3 style="color: #ffffff; font-size: 18px;">Congratulations, Dr. ${doctorName}!</h3>
+
+      <p style="color: #cbd5e1; line-height: 1.6; font-size: 14px;">
+        Your CareBridge doctor account application has been reviewed and official approval has been granted. You now have full access to your clinician portal and patient care tools.
+      </p>
+
+      <div style="text-align: center; margin: 32px 0;">
+        <a href="${dashboardUrl}" style="background-color: #059669; color: #ffffff; padding: 14px 28px; text-decoration: none; border-radius: 12px; font-weight: bold; font-size: 14px; display: inline-block;">
+          Go to Doctor Dashboard
+        </a>
+      </div>
+
+      <p style="color: #64748b; font-size: 12px; line-height: 1.5; border-top: 1px solid #1e293b; padding-top: 16px;">
+        If you did not request this account, please contact CareBridge support immediately.
+      </p>
+    </div>
+  `;
+
+  const { transporter, config } = createTransporter();
+
+  if (process.env.EMAIL_MODE === 'development' || !transporter) {
+    console.log(`[Doctor Approved SIMULATED] Email to Dr. ${doctorName} (${toEmail})`);
+    logEmailDispatch('FEEDBACK_CONFIRM', toEmail, subject, `Approval email for Dr. ${doctorName}`, true);
+    return { success: true, simulated: true };
+  }
+
+  try {
+    await transporter.sendMail({ from: config.from, to: toEmail, subject, html });
+    logEmailDispatch('FEEDBACK_CONFIRM', toEmail, subject, `Approval email for Dr. ${doctorName}`, true);
+    return { success: true };
+  } catch (err: any) {
+    const errorMsg = err?.message || 'Failed to send approval email.';
+    console.error('[Doctor Approval Email Error]:', errorMsg);
+    logEmailDispatch('FEEDBACK_CONFIRM', toEmail, subject, `Approval email for Dr. ${doctorName}`, false, errorMsg);
+    return { success: false, error: errorMsg };
+  }
+}
+
+/**
+ * 4. Send Doctor Account Rejection Email
+ */
+export async function sendDoctorRejectionEmail(params: {
+  toEmail: string;
+  doctorName: string;
+  rejectionReason?: string;
+}): Promise<MailDeliveryResult> {
+  const { toEmail, doctorName, rejectionReason } = params;
+  const subject = 'Update Regarding Your CareBridge Doctor Application';
+
+  const reasonHtml = rejectionReason
+    ? `<div style="background: #1e1b4b; border: 1px solid #3730a3; padding: 14px; border-radius: 10px; margin: 16px 0; font-size: 13px; color: #c7d2fe;">
+        <strong>Reason specified:</strong> ${rejectionReason}
+       </div>`
+    : '';
+
+  const html = `
+    <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 28px; background: #0f172a; border-radius: 16px; color: #f8fafc; border: 1px solid #1e293b;">
+      <h3 style="color: #f43f5e; margin-top: 0;">CareBridge Application Review Update</h3>
+      <p style="color: #cbd5e1; font-size: 14px; line-height: 1.6;">
+        Hello Dr. ${doctorName},<br/><br/>
+        We have completed the review of your CareBridge doctor application. Unfortunately, your application has not been approved at this time.
+      </p>
+
+      ${reasonHtml}
+
+      <p style="color: #94a3b8; font-size: 13px; line-height: 1.5;">
+        If you believe this decision was made in error or if you wish to submit additional credentials, please contact CareBridge support.
+      </p>
+    </div>
+  `;
+
+  const { transporter, config } = createTransporter();
+
+  if (process.env.EMAIL_MODE === 'development' || !transporter) {
+    console.log(`[Doctor Rejection SIMULATED] Email to Dr. ${doctorName} (${toEmail})`);
+    logEmailDispatch('FEEDBACK_CONFIRM', toEmail, subject, `Rejection email for Dr. ${doctorName}`, true);
+    return { success: true, simulated: true };
+  }
+
+  try {
+    await transporter.sendMail({ from: config.from, to: toEmail, subject, html });
+    logEmailDispatch('FEEDBACK_CONFIRM', toEmail, subject, `Rejection email for Dr. ${doctorName}`, true);
+    return { success: true };
+  } catch (err: any) {
+    const errorMsg = err?.message || 'Failed to send rejection email.';
+    console.error('[Doctor Rejection Email Error]:', errorMsg);
+    logEmailDispatch('FEEDBACK_CONFIRM', toEmail, subject, `Rejection email for Dr. ${doctorName}`, false, errorMsg);
+    return { success: false, error: errorMsg };
+  }
+}
+
